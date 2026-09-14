@@ -1,0 +1,1275 @@
+/* Card Maker — интерфейс. Всё считается локально в браузере. */
+
+const STORE_TEMPLATES = 'cardmaker.templates.v2';
+const STORE_PROJECT = 'cardmaker.project.v2';
+const PREVIEW_CSS_WIDTH = 225;
+const PREVIEW_SCALE = 2;
+const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
+
+const SAMPLE = `//1
+_Лаура Саламат, Enterprise Architect — сооснователь сообщества IT-архитекторов Казахстана_
+
+**Заголовок**
+
+**Я занимаюсь плаванием** два с половиной года. За это время приняла участие в пяти заплывах и преодолела дистанцию в 14 километров.
+
+//2
+**Заголовок**
+
+В бассейн я пришла ради _красоты_ и хорошей осанки. Но довольно быстро стало интереснее не то, как выглядит мое тело, а то, на что оно становится способно.`;
+
+const state = {
+  cover: { kind: 'cover', title: '', body: '', img: null, usePhoto: true,
+           zoom: 1, panX: 0, panY: 0, rotate: 0, style: null },
+  coverTitleSize: 60,
+  coverBodySize: 45,
+  cardsText: '',
+  photos: [],          // фото карточек по порядку: photos[0] — первая карточка
+  cards: [],           // разобранные карточки (пересобираются из текста)
+  format: DEFAULT_FORMAT,
+  exportFormat: 'png',
+  cardStyles: [],       // стиль каждой карточки: то, что пользователь поменял руками
+  coverStyles: { title: {}, body: {} },   // заголовок и подзаголовок обложки — отдельно
+  templateName: null,
+  templates: {},
+  assets: {},
+  current: 0,          // 0 — обложка, далее карточки
+  focusZone: 'editor', // где пользователь работал: editor | coverTitle | coverBody | preview
+  lastCaret: null,     // последнее положение курсора в поле карточек
+  fontsReady: false,
+};
+
+const el = {};
+['previews', 'coverTitle', 'coverBody', 'coverTitleSize', 'coverBodySize', 'cardsText',
+ 'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
+ 'status', 'menu', 'filePicker', 'assetPicker',
+ 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope',
+ 'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut']
+  .forEach(id => { el[id] = document.getElementById(id); });
+
+/* --------------------------------------------------- поле ввода карточек */
+
+/* Текст поля в виде разметки. */
+function editorValue() {
+  return htmlToMarkup(el.cardsText);
+}
+
+/* Показать разметку в поле, сохранив положение курсора. */
+function setEditorValue(text, keepCaret = true) {
+  const caret = keepCaret ? getCaretOffset(el.cardsText) : null;
+  el.cardsText.innerHTML = markupToHtml(text);
+  if (caret) setCaretOffset(el.cardsText, caret.start, caret.end);
+}
+
+/* Выделение в поле как смещения в разметке. */
+function editorSelection() {
+  const plain = getCaretOffset(el.cardsText);
+  if (!plain) return null;
+  return plain;
+}
+
+let statusTimer = null;
+function say(text) {
+  el.status.textContent = text;
+  clearTimeout(statusTimer);
+  statusTimer = setTimeout(() => { el.status.textContent = ''; }, 5000);
+}
+
+/* ---------------------------------------------------------------- иконки */
+
+function paintIcons(root = document) {
+  root.querySelectorAll('[data-icon]').forEach(node => {
+    const svg = (typeof ICONS !== 'undefined') ? ICONS[node.dataset.icon] : null;
+    if (svg && !node.dataset.painted) {
+      node.innerHTML = svg;
+      node.dataset.painted = '1';
+    }
+  });
+}
+
+/* ------------------------------------------------------------- хранилище */
+
+function loadTemplates() {
+  try { state.templates = JSON.parse(localStorage.getItem(STORE_TEMPLATES) || '{}'); }
+  catch { state.templates = {}; }
+  if (!Object.keys(state.templates).length) {
+    state.templates = { 'Мой проект': { logo: null, logoDark: null, gradient: null } };
+  }
+  state.templateName = Object.keys(state.templates)[0];
+}
+
+function saveTemplates() {
+  try { localStorage.setItem(STORE_TEMPLATES, JSON.stringify(state.templates)); }
+  catch { say('Не хватает места в браузере — логотип не сохранён'); }
+}
+
+function saveProject() {
+  const data = {
+    coverTitle: state.cover.title, coverBody: state.cover.body,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    cardsText: state.cardsText, format: state.format,
+    exportFormat: state.exportFormat,
+    cardStyles: state.cardStyles, coverStyles: state.coverStyles,
+    templateName: state.templateName,
+  };
+  try { localStorage.setItem(STORE_PROJECT, JSON.stringify(data)); } catch { /* не критично */ }
+}
+
+function loadProject() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
+  if (!d) return false;
+  state.cover.title = d.coverTitle || '';
+  state.cover.body = d.coverBody || '';
+  state.coverTitleSize = d.coverTitleSize || 60;
+  state.coverBodySize = d.coverBodySize || 45;
+  state.cardsText = d.cardsText || '';
+  if (FORMATS[d.format]) state.format = d.format;
+  if (d.exportFormat) state.exportFormat = d.exportFormat;
+  if (Array.isArray(d.cardStyles)) state.cardStyles = d.cardStyles;
+  if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
+  if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
+  return true;
+}
+
+/* ---------------------------------------------------------------- ассеты */
+
+function dataUrlToImage(url, timeoutMs = 5000) {
+  return new Promise(resolve => {
+    if (!url) return resolve(null);
+    const img = new Image();
+    let done = false;
+    const finish = v => { if (!done) { done = true; resolve(v); } };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    img.onload = () => { clearTimeout(timer); finish(img); };
+    img.onerror = () => { clearTimeout(timer); finish(null); };
+    img.src = url;
+  });
+}
+
+/* Находит видимую часть логотипа, отбрасывая прозрачные поля файла. */
+function trimTransparent(img) {
+  if (!img) return null;
+  try {
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+    const { data } = ctx.getImageData(0, 0, c.width, c.height);
+    let minX = c.width, minY = c.height, maxX = -1, maxY = -1;
+    for (let y = 0; y < c.height; y++) {
+      for (let x = 0; x < c.width; x++) {
+        if (data[(y * c.width + x) * 4 + 3] > 8) {
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX < 0) return { img, sx: 0, sy: 0, sw: img.width, sh: img.height };
+    return { img, sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 };
+  } catch {
+    return { img, sx: 0, sy: 0, sw: img.width, sh: img.height };
+  }
+}
+
+async function prepareAssets(name) {
+  const tpl = state.templates[name] || {};
+  const B = (typeof BUNDLED_BRAND !== 'undefined') ? BUNDLED_BRAND : {};
+  const [logo, logoDark] = await Promise.all([
+    dataUrlToImage(tpl.logo || B.logo),
+    dataUrlToImage(tpl.logoDark || B.logoDark),
+  ]);
+  state.assets[name] = { logo: trimTransparent(logo), logoDark: trimTransparent(logoDark) };
+}
+
+function currentAssets() {
+  return state.assets[state.templateName] || { logo: null, logoDark: null };
+}
+
+function currentGradient() {
+  const tpl = state.templates[state.templateName] || {};
+  return Object.assign({}, GRADIENT_DEFAULTS, tpl.gradient || {});
+}
+
+/* ------------------------------------------------------------- карточки */
+
+/* Пересобирает список карточек из текста, сохраняя уже загруженные фото. */
+function syncCards() {
+  const parsed = parseCards(state.cardsText);
+  state.cards = parsed.map((p, i) => ({
+    kind: 'card',
+    lines: p.lines,
+    usePhoto: p.usePhoto,
+    img: state.photos[i] || null,
+    zoom: (state.cards[i] && state.cards[i].zoom) || 1,
+    panX: (state.cards[i] && state.cards[i].panX) || 0,
+    panY: (state.cards[i] && state.cards[i].panY) || 0,
+    rotate: (state.cards[i] && state.cards[i].rotate) || 0,
+    style: state.cardStyles[i] || {},
+  }));
+  state.cover.style = { size: state.coverBodySize, headingSize: state.coverTitleSize };
+  state.cover.titleStyle = Object.assign({}, state.coverStyles.title);
+  state.cover.bodyStyle = Object.assign({}, state.coverStyles.body);
+  if (state.current > state.cards.length) state.current = 0;
+}
+
+function allCards() {
+  return [state.cover].concat(state.cards);
+}
+
+function cardLabel(i) {
+  return i === 0 ? 'Обложка' : 'Карточка ' + i;
+}
+
+/* ---------------------------------------------------------------- превью */
+
+function buildPreviews() {
+  const list = allCards();
+  el.previews.innerHTML = '';
+
+  list.forEach((card, i) => {
+    const item = document.createElement('div');
+    item.className = 'preview-item';
+
+    const label = document.createElement('p');
+    label.className = 'section-label';
+    label.textContent = cardLabel(i);
+    item.appendChild(label);
+
+    const frame = document.createElement('div');
+    frame.className = 'frame' + (i === state.current ? ' selected' : '');
+    frame.dataset.index = String(i);
+    frame.appendChild(document.createElement('canvas'));
+
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'Предпросмотр';
+    frame.appendChild(empty);
+
+    attachFrameEvents(frame, i);
+    item.appendChild(frame);
+    el.previews.appendChild(item);
+  });
+
+  scheduleRender();
+}
+
+function attachFrameEvents(frame, index) {
+  // работает с мышью, пальцем и пером
+  frame.addEventListener('pointerdown', e => {
+    selectCard(index);
+    const card = allCards()[index];
+    if (!card || !card.img || !card.usePhoto) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    try { frame.setPointerCapture(e.pointerId); } catch { /* не критично */ }
+
+    const sx = e.clientX, sy = e.clientY;
+    const ox = card.panX, oy = card.panY;
+    const ratio = FORMATS[state.format][0] / frame.clientWidth;
+
+    const move = ev => {
+      card.panX = ox - (ev.clientX - sx) * ratio;
+      card.panY = oy - (ev.clientY - sy) * ratio;
+      syncTransformControls();
+      scheduleRender();
+    };
+    const up = ev => {
+      frame.removeEventListener('pointermove', move);
+      frame.removeEventListener('pointerup', up);
+      frame.removeEventListener('pointercancel', up);
+      try { frame.releasePointerCapture(ev.pointerId); } catch { /* не критично */ }
+    };
+    frame.addEventListener('pointermove', move);
+    frame.addEventListener('pointerup', up);
+    frame.addEventListener('pointercancel', up);
+  });
+
+  // щипок двумя пальцами — масштаб
+  let pinchStart = null;
+  frame.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) return;
+    const card = allCards()[index];
+    if (!card || !card.img || !card.usePhoto) return;
+    const [a, b] = e.touches;
+    pinchStart = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: card.zoom };
+  }, { passive: true });
+
+  frame.addEventListener('touchmove', e => {
+    if (!pinchStart || e.touches.length !== 2) return;
+    const card = allCards()[index];
+    if (!card) return;
+    e.preventDefault();
+    const [a, b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchStart.zoom * (dist / pinchStart.dist)));
+    syncTransformControls();
+    scheduleRender();
+  }, { passive: false });
+
+  frame.addEventListener('touchend', () => { pinchStart = null; }, { passive: true });
+
+  frame.addEventListener('wheel', e => {
+    const card = allCards()[index];
+    if (!card || !card.img || !card.usePhoto) return;
+    e.preventDefault();
+    selectCard(index);
+    card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, card.zoom + (e.deltaY > 0 ? -0.05 : 0.05)));
+    syncTransformControls();
+    scheduleRender();
+  }, { passive: false });
+
+  frame.addEventListener('dragover', e => { e.preventDefault(); frame.classList.add('dropping'); });
+  frame.addEventListener('dragleave', () => frame.classList.remove('dropping'));
+  frame.addEventListener('drop', async e => {
+    e.preventDefault();
+    frame.classList.remove('dropping');
+    selectCard(index);
+    const file = [...(e.dataTransfer.files || [])].find(f => f.type.startsWith('image/'));
+    if (file) await setPhoto(index, file);
+  });
+}
+
+function selectCard(index, options = {}) {
+  state.current = index;
+  if (!options.keepZone) state.focusZone = 'preview';
+  [...el.previews.querySelectorAll('.frame')].forEach(f => {
+    f.classList.toggle('selected', Number(f.dataset.index) === index);
+  });
+  syncTransformControls();
+}
+
+/* Ползунки трансформации показывают значения выбранной карточки. */
+function syncTransformControls() {
+  const card = allCards()[state.current];
+  if (!card) return;
+  el.rngScale.value = String(Math.round(((card.zoom || 1) - 1) * 100));
+  el.rngOffsetX.value = String(Math.round(card.panX || 0));
+  el.rngOffsetY.value = String(Math.round(card.panY || 0));
+  el.rngRotate.value = String(Math.round(card.rotate || 0));
+  paintTransformOutputs();
+}
+
+function paintTransformOutputs() {
+  el.scaleOut.textContent = el.rngScale.value + '%';
+  el.offsetXOut.textContent = el.rngOffsetX.value + ' пикселей';
+  el.offsetYOut.textContent = el.rngOffsetY.value + ' пикселей';
+  el.rotateOut.textContent = el.rngRotate.value + '°';
+}
+
+/* ------------------------------------------------------------------ фото */
+
+function fileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('не удалось прочитать изображение'));
+      img.src = reader.result;
+    };
+    reader.onerror = () => reject(new Error('не удалось прочитать файл'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function setPhoto(index, file) {
+  try {
+    const img = await fileToImage(file);
+    if (index === 0) {
+      state.cover.img = img;
+      state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+    } else {
+      state.photos[index - 1] = img;
+      const card = state.cards[index - 1];
+      if (card) { card.img = img; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0; }
+    }
+    selectCard(index);
+    scheduleRender();
+    say('Фото добавлено');
+  } catch (err) {
+    say('Не получилось открыть файл: ' + err.message);
+  }
+}
+
+/* ---------------------------------------------------------------- рендер */
+
+let renderTimer = null;
+function scheduleRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(renderAll, 60);
+}
+
+function renderAll() {
+  if (!state.fontsReady) return;
+  const [W, H] = FORMATS[state.format];
+  const scale = (PREVIEW_CSS_WIDTH * PREVIEW_SCALE) / W;
+  const assets = currentAssets();
+  const gradient = currentGradient();
+  const list = allCards();
+  const frames = [...el.previews.querySelectorAll('.frame')];
+
+  list.forEach((card, i) => {
+    const frame = frames[i];
+    if (!frame) return;
+    const canvas = frame.querySelector('canvas');
+    const empty = frame.querySelector('.empty');
+
+    const hasContent = (card.usePhoto && card.img) ||
+      (card.kind === 'cover' ? (card.title || card.body) : card.lines.some(l => l.trim()));
+    empty.style.display = hasContent ? 'none' : 'grid';
+
+    canvas.width = Math.round(W * scale);
+    canvas.height = Math.round(H * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    try {
+      const fixed = renderCard(ctx, card, [W, H], assets, gradient);
+      card.panX = fixed.panX; card.panY = fixed.panY;
+    } catch (err) {
+      console.error('не удалось отрисовать карточку', i, err);
+      say('Карточка ' + (i + 1) + ': ошибка отрисовки');
+    }
+  });
+}
+
+function renderFull(card) {
+  const [W, H] = FORMATS[state.format];
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  renderCard(ctx, card, [W, H], currentAssets(), currentGradient());
+  return canvas;
+}
+
+/* -------------------------------------------------------------- экспорт */
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise(resolve => canvas.toBlob(resolve, type, quality));
+}
+
+function hasContent(c) {
+  return (c.usePhoto && c.img) ||
+    (c.kind === 'cover' ? Boolean(c.title || c.body) : c.lines.some(l => l.trim()));
+}
+
+async function exportAll() {
+  const list = allCards().filter(hasContent);
+  if (!list.length) { say('Пока нечего экспортировать'); return; }
+
+  const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
+  let n = 0;
+
+  for (let i = 0; i < list.length; i++) {
+    const blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+    n++;
+    await new Promise(r => setTimeout(r, 350));
+  }
+  say('Скачано: ' + n);
+}
+
+async function copyCurrent() {
+  const card = allCards()[state.current];
+  if (!card) return;
+  try {
+    const blob = await canvasToBlob(renderFull(card), 'image/png');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    say('Карточка скопирована');
+  } catch {
+    say('Браузер не дал доступ к буферу — используй экспорт');
+  }
+}
+
+async function pasteFromClipboard() {
+  try {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(t => t.startsWith('image/'));
+      if (type) { await setPhoto(state.current, await item.getType(type)); return; }
+    }
+    const text = await navigator.clipboard.readText();
+    if (text) { insertText(text); return; }
+    say('В буфере пусто');
+  } catch {
+    say('Нажми ⌘V на клавиатуре — так браузер разрешает вставку');
+  }
+}
+
+/* Вставляет разметку в место курсора, не полагаясь на команды браузера. */
+function insertMarkup(markup) {
+  const range = getCaretOffset(el.cardsText) || state.lastCaret || { start: 0, end: 0 };
+  const chars = markupToChars(state.cardsText);
+  const added = markupToChars(markup);
+  chars.splice(range.start, range.end - range.start, ...added);
+  state.cardsText = charsToMarkup(chars);
+  setEditorValue(state.cardsText, false);
+  const caret = range.start + added.length;
+  setCaretOffset(el.cardsText, caret, caret);
+  state.lastCaret = { start: caret, end: caret };
+  onEditorInput();
+}
+
+function insertText(text) {
+  insertMarkup(clipboardPlainToMarkup(text));
+  say('Текст вставлен');
+}
+
+function onEditorInput() {
+  state.cardsText = editorValue();
+  syncCards(); buildPreviews(); saveProject();
+  syncTypographyControls();
+  revealActiveCard();
+}
+
+/* ------------------------------------------- к какой карточке применять настройки */
+
+/*
+ * Считает, какие карточки задевает выделение в поле ввода.
+ * Возвращает индексы в state.cards; если поле не в фокусе — карточку,
+ * выделенную в превью.
+ */
+function selectedCardIndexes() {
+  if (state.focusZone === 'coverTitle') return { cover: 'title' };
+  if (state.focusZone === 'coverBody') return { cover: 'body' };
+  if (state.focusZone === 'preview') {
+    return state.current > 0 ? [state.current - 1] : { cover: 'title' };
+  }
+
+  // фокус мог уйти на список или ползунок — берём последнее положение курсора
+  const inEditor = el.cardsText.contains(document.activeElement) ||
+                   document.activeElement === el.cardsText;
+  const range = (inEditor ? editorSelection() : null) || state.lastCaret;
+  if (!range) return state.current > 0 ? [state.current - 1] : { cover: 'title' };
+
+  // считаем по тому же тексту, по которому вычислены смещения курсора
+  const text = editorText(el.cardsText);
+  const from = range.start, to = range.end;
+
+  const touched = [];
+  let cardIndex = -1;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const lineStart = offset;
+    const lineEnd = offset + line.length;
+    if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) cardIndex++;
+    else if (cardIndex < 0 && line.trim()) cardIndex = 0;
+    // строка попадает в выделение (или в неё стоит каретка)
+    const inside = from <= lineEnd && to >= lineStart;
+    if (inside && cardIndex >= 0 && !touched.includes(cardIndex)) touched.push(cardIndex);
+    offset = lineEnd + 1;
+  }
+  return touched;
+}
+
+/*
+ * Пока пишешь текст пятой карточки, её превью само подкручивается в вид,
+ * чтобы не искать его глазами и не листать вручную.
+ */
+function revealActiveCard() {
+  if (state.focusZone !== 'editor') return;
+  const idx = selectedCardIndexes();
+  if (!Array.isArray(idx) || !idx.length) return;
+
+  const target = idx[0] + 1;                  // 0 — обложка
+  if (target === state.current) return;
+
+  selectCard(target, { keepZone: true });
+
+  const frame = el.previews.querySelector('.frame[data-index="' + target + '"]');
+  if (!frame) return;
+  const item = frame.closest('.preview-item') || frame;
+  if (item.scrollIntoView) {
+    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+/* Есть ли выделенный кусок текста в поле карточек. */
+function hasEditorSelection() {
+  const range = getCaretOffset(el.cardsText) || state.lastCaret;
+  return Boolean(range && range.end > range.start);
+}
+
+/* Запоминает, что пользователь работает в поле карточек, и где там курсор. */
+function rememberEditorFocus() {
+  const inEditor = el.cardsText.contains(document.activeElement) ||
+                   document.activeElement === el.cardsText;
+  if (!inEditor) return false;
+  const range = editorSelection();
+  if (range) state.lastCaret = range;
+  state.focusZone = 'editor';
+  return true;
+}
+
+/* Стиль, который сейчас показывают контролы: активной карточки или обложки. */
+function activeStyleTarget() {
+  const idx = selectedCardIndexes();
+  if (idx && idx.cover) return { kind: 'cover', field: idx.cover };
+  if (!idx || !idx.length) return { kind: 'cover', field: 'title' };
+  return { kind: 'card', indexes: idx };
+}
+
+function effectiveStyle(cardIndex) {
+  const card = state.cards[cardIndex];
+  if (!card) return null;
+  return Object.assign(defaultTypography(card), state.cardStyles[cardIndex] || {});
+}
+
+/* Показывает в панели типографики настройки активной карточки. */
+function syncTypographyControls() {
+  const target = activeStyleTarget();
+  let style;
+  if (target.kind === 'cover') {
+    const base = defaultTypography(state.cover);
+    base.weight = target.field === 'title' ? 'Bold' : 'Medium';
+    base.size = target.field === 'title' ? state.coverTitleSize : state.coverBodySize;
+    style = Object.assign(base, state.coverStyles[target.field]);
+  } else {
+    style = effectiveStyle(target.indexes[0]);
+  }
+  if (!style) return;
+  el.fontWeight.value = style.weight;
+  setSelectValue(el.fontSize, style.size);
+  el.lineHeight.value = String(style.lineHeight);
+  el.letterSpacing.value = String(style.letterSpacing);
+  el.alignGroup.querySelectorAll('button').forEach(b => {
+    b.classList.toggle('active', b.dataset.align === style.align);
+  });
+  el.typoScope.textContent = target.kind === 'cover'
+    ? (target.field === 'title' ? 'заголовок обложки' : 'подзаголовок обложки')
+    : (target.indexes.length > 1
+        ? 'карточки ' + target.indexes.map(i => i + 1).join(', ')
+        : 'карточка ' + (target.indexes[0] + 1));
+}
+
+/* Ставит значение в список, добавляя пункт, если такого кегля в нём нет. */
+function setSelectValue(select, value) {
+  const text = String(value);
+  if (![...select.options].some(o => o.value === text)) {
+    const option = document.createElement('option');
+    option.value = text;
+    option.textContent = text;
+    select.appendChild(option);
+  }
+  select.value = text;
+}
+
+/* Записывает изменённую настройку туда, где стоит выделение. */
+function applyStylePatch(patch) {
+  const target = activeStyleTarget();
+  if (target.kind === 'cover') {
+    Object.assign(state.coverStyles[target.field], patch);
+    // кегль обложки живёт в степперах, держим их в согласии
+    if (patch.size) {
+      if (target.field === 'title') {
+        state.coverTitleSize = patch.size;
+        el.coverTitleSize.textContent = String(patch.size);
+      } else {
+        state.coverBodySize = patch.size;
+        el.coverBodySize.textContent = String(patch.size);
+      }
+    }
+  } else {
+    for (const i of target.indexes) {
+      state.cardStyles[i] = Object.assign({}, state.cardStyles[i] || {}, patch);
+    }
+  }
+  syncCards(); scheduleRender(); saveProject();
+}
+
+/* --------------------------------------------------- форматирование текста */
+
+/*
+ * Оборачивает выделенный текст в разметку, а если он уже обёрнут — снимает её
+ * и возвращает как было. Работает так же, как ⌘B / ⌘I в текстовом редакторе.
+ */
+/*
+ * Меняет оформление выделенного текста.
+ * Работает по посимвольной модели, поэтому результат одинаков во всех
+ * браузерах и не зависит от команд редактирования.
+ *
+ * patch: { bold: 'toggle' } | { italic: 'toggle' } | { size: 48 } | { size: null }
+ */
+function restyleSelection(patch) {
+  el.cardsText.focus();
+  let range = getCaretOffset(el.cardsText) || state.lastCaret;
+  if (!range) return false;
+
+  const chars = markupToChars(state.cardsText);
+  let { start, end } = range;
+
+  // без выделения берём слово под курсором
+  if (start === end) {
+    while (start > 0 && chars[start - 1] && /\S/.test(chars[start - 1].ch)) start--;
+    while (end < chars.length && chars[end] && /\S/.test(chars[end].ch)) end++;
+    if (start === end) return false;
+  }
+
+  const picked = chars.slice(start, end).filter(c => c.ch !== '\n');
+  if (!picked.length) return false;
+
+  if (patch.bold === 'toggle') {
+    const value = !picked.every(c => c.bold);
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].bold = value;
+  }
+  if (patch.italic === 'toggle') {
+    const value = !picked.every(c => c.italic);
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].italic = value;
+  }
+  if ('size' in patch) {
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].size = patch.size;
+  }
+
+  state.cardsText = charsToMarkup(chars);
+  setEditorValue(state.cardsText, false);
+  setCaretOffset(el.cardsText, start, end);
+  state.lastCaret = { start, end };
+  state.focusZone = 'editor';
+  syncCards(); buildPreviews(); saveProject();
+  syncTypographyControls();
+  return true;
+}
+
+function toggleMarkup(mark) {
+  restyleSelection(mark === '**' ? { bold: 'toggle' } : { italic: 'toggle' });
+}
+
+/* ------------------------------------------------- отправка в Telegram */
+
+/*
+ * Готовые карточки отдаются системному окну «Поделиться» — оттуда их можно
+ * отправить в Telegram, если приложение установлено. Браузер не умеет класть
+ * файлы в чат напрямую, поэтому это самый короткий честный путь.
+ */
+async function sendToTelegram() {
+  const list = allCards().filter(hasContent);
+  if (!list.length) { say('Пока нечего отправлять'); return; }
+
+  const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
+  const files = [];
+  for (let i = 0; i < list.length; i++) {
+    const blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    if (!blob) continue;
+    const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
+    files.push(new File([blob], name, { type: mime }));
+  }
+  if (!files.length) { say('Не удалось подготовить файлы'); return; }
+
+  if (navigator.canShare && navigator.canShare({ files }) && navigator.share) {
+    try {
+      await navigator.share({ files, title: 'Карточки' });
+      say('Отправлено');
+    } catch (err) {
+      if (err && err.name !== 'AbortError') say('Отправка отменена');
+    }
+    return;
+  }
+
+  // окна «Поделиться» нет — скачиваем и открываем Telegram
+  await exportAll();
+  window.open('https://web.telegram.org/', '_blank', 'noopener');
+  say('Браузер не умеет отправлять файлы напрямую — карточки скачаны, Telegram открыт');
+}
+
+/* ------------------------------------------------------------ инструкция */
+
+const HELP = [
+  ['Как устроено окно',
+   'Слева — превью всех карточек, посередине — текст, справа — типографика, ' +
+   'трансформация картинки и экспорт. Углы панелей можно тянуть, меняя их размер.'],
+  ['Обложка',
+   'Заголовок и подзаголовок набираются в двух верхних полях. Кегль каждого ' +
+   'меняется кнопками − и + справа от поля. Начертание, трекинг и выключку ' +
+   'заголовка и подзаголовка можно настроить по отдельности: поставь курсор ' +
+   'в нужное поле и меняй настройки справа.'],
+  ['Карточки карусели',
+   'Пишутся одним текстом в нижнем поле. Строка //1 начинает новую карточку: ' +
+   'пока фотографии нет — она белая, добавишь фото — сама станет карточкой ' +
+   'с фотографией сверху. Строка //2- оставит карточку белой навсегда.'],
+  ['Форматирование',
+   'Выдели текст и нажми ⌘B или ⌘I — или кнопки B и I внизу. Форматирование ' +
+   'сразу видно в поле. Повторное нажатие снимает его. Строка целиком жирная ' +
+   'становится подзаголовком карточки и набирается крупным кеглем. ' +
+   'Пустая строка — отступ в одну строку.'],
+  ['Вставка из других программ',
+   'Текст из Google Документов, Telegram и Word вставляется вместе с жирным ' +
+   'и курсивом — форматирование не теряется.'],
+  ['Фотографии',
+   'Перетащи файл на нужное превью, либо выдели превью и нажми ⌘V, либо ' +
+   'используй первую кнопку внизу. Колесо мыши на превью — масштаб, ' +
+   'перетаскивание — сдвиг кадра. Точные значения — в блоке «Трансформация».'],
+  ['Типографика',
+   'Настройки применяются туда, где стоит курсор: к выбранной карточке или ' +
+   'к полю обложки. Область действия написана зелёным рядом со словом ' +
+   '«Типография». Если выделить текст сразу в нескольких карточках, ' +
+   'настройка применится ко всем.'],
+  ['Висячие предлоги',
+   'Короткие слова — в, на, и, для — не остаются в конце строки: ' +
+   'они автоматически переносятся вместе со следующим словом.'],
+  ['Экспорт',
+   'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
+   'Формат файла — PNG или JPG. Кнопка с самолётиком отдаёт карточки ' +
+   'в системное окно «Поделиться», откуда их можно отправить в Telegram. ' +
+   '⌘C копирует выбранную карточку в буфер обмена.'],
+  ['Шаблоны',
+   'Иконка с сеткой внизу — логотипы проекта и переключение между проектами. ' +
+   'Иконка с карандашом — размер карточки и настройка затемнения на обложке.'],
+];
+
+function openHelp() {
+  const body = document.getElementById('helpBody');
+  body.innerHTML = '<h2>Инструкция</h2>' + HELP.map(([title, text]) =>
+    '<section><h3>' + title + '</h3><p>' + text + '</p></section>').join('');
+  document.getElementById('helpModal').hidden = false;
+}
+
+function closeHelp() {
+  document.getElementById('helpModal').hidden = true;
+}
+
+/* ------------------------------------------------------------------ меню */
+
+function closeMenu() { el.menu.classList.remove('open'); }
+
+function openMenu(anchor, items) {
+  el.menu.innerHTML = '';
+  for (const item of items) {
+    if (item.divider) { el.menu.appendChild(document.createElement('hr')); continue; }
+    if (item.groupLabel) {
+      const l = document.createElement('div');
+      l.className = 'group-label';
+      l.textContent = item.groupLabel;
+      el.menu.appendChild(l);
+      continue;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    const tick = document.createElement('span');
+    tick.className = 'tick';
+    tick.textContent = item.checked ? '✓' : '';
+    b.appendChild(tick);
+    b.appendChild(document.createTextNode(item.label));
+    b.addEventListener('click', () => { closeMenu(); item.action(); });
+    el.menu.appendChild(b);
+  }
+  placeMenu(anchor);
+}
+
+function placeMenu(anchor) {
+  const rect = anchor.getBoundingClientRect();
+  el.menu.classList.add('open');
+  const width = el.menu.offsetWidth;
+  const height = el.menu.offsetHeight;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+  let top = rect.top - height - 8;
+  if (top < 12) top = rect.bottom + 8;
+  el.menu.style.left = left + 'px';
+  el.menu.style.top = top + 'px';
+}
+
+function formatMenu(anchor) {
+  const items = Object.keys(FORMATS).map(name => ({
+    label: name, checked: name === state.format,
+    action: () => { state.format = name; scheduleRender(); saveProject(); say('Формат: ' + name); },
+  }));
+  items.push({ divider: true }, { groupLabel: 'Затемнение обложки' });
+  openMenu(anchor, items);
+  appendGradientSliders();
+  placeMenu(anchor);
+}
+
+function appendGradientSliders() {
+  const g = currentGradient();
+  const rows = [
+    { key: 'height', title: 'Высота', min: 5, max: 100 },
+    { key: 'opacity', title: 'Плотность', min: 0, max: 100 },
+    { key: 'softness', title: 'Плавность', min: 5, max: 100 },
+  ];
+  for (const row of rows) {
+    const wrap = document.createElement('div');
+    wrap.className = 'slider';
+    const head = document.createElement('div');
+    head.className = 'slider-head';
+    const name = document.createElement('span');
+    name.textContent = row.title;
+    const value = document.createElement('output');
+    value.textContent = Math.round(g[row.key] * 100) + '%';
+    head.append(name, value);
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(row.min); input.max = String(row.max);
+    input.value = String(Math.round(g[row.key] * 100));
+    input.addEventListener('input', () => {
+      const tpl = state.templates[state.templateName];
+      tpl.gradient = Object.assign({}, currentGradient(), { [row.key]: Number(input.value) / 100 });
+      value.textContent = input.value + '%';
+      scheduleRender();
+    });
+    input.addEventListener('change', saveTemplates);
+    wrap.append(head, input);
+    el.menu.appendChild(wrap);
+  }
+}
+
+let pendingAssetKind = null;
+
+function templatesMenu(anchor) {
+  const items = [{ groupLabel: 'Проект' }];
+  for (const name of Object.keys(state.templates)) {
+    items.push({
+      label: name, checked: name === state.templateName,
+      action: async () => {
+        state.templateName = name;
+        if (!state.assets[name]) await prepareAssets(name);
+        scheduleRender(); saveProject();
+      },
+    });
+  }
+  items.push({ divider: true }, {
+    label: 'Новый проект…',
+    action: async () => {
+      const name = prompt('Название проекта:');
+      if (!name) return;
+      state.templates[name] = { logo: null, logoDark: null, gradient: null };
+      state.templateName = name;
+      saveTemplates();
+      await prepareAssets(name);
+      scheduleRender();
+    },
+  });
+  items.push({ divider: true }, { groupLabel: 'Файлы шаблона' },
+    { label: 'Логотип светлый…', action: () => pickAsset('logo') },
+    { label: 'Логотип тёмный…', action: () => pickAsset('logoDark') });
+
+  const tpl = state.templates[state.templateName] || {};
+  if (tpl.logo || tpl.logoDark) {
+    items.push({
+      label: 'Вернуть логотипы по умолчанию',
+      action: async () => {
+        state.templates[state.templateName] =
+          { logo: null, logoDark: null, gradient: tpl.gradient || null };
+        saveTemplates();
+        await prepareAssets(state.templateName);
+        scheduleRender();
+        say('Вернул встроенные логотипы');
+      },
+    });
+  }
+  if (Object.keys(state.templates).length > 1) {
+    items.push({
+      label: 'Удалить этот проект',
+      action: async () => {
+        delete state.templates[state.templateName];
+        delete state.assets[state.templateName];
+        state.templateName = Object.keys(state.templates)[0];
+        saveTemplates();
+        if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
+        scheduleRender();
+      },
+    });
+  }
+  openMenu(anchor, items);
+}
+
+function pickAsset(kind) {
+  pendingAssetKind = kind;
+  el.assetPicker.value = '';
+  el.assetPicker.click();
+}
+
+/* --------------------------------------------------------------- очистка */
+
+function clearAll() {
+  state.cover.title = ''; state.cover.body = '';
+  state.cover.img = null; state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0;
+  state.cardsText = '';
+  state.photos = [];
+  state.cards = [];
+  state.cardStyles = [];
+  state.coverStyles = { title: {}, body: {} };
+  state.focusZone = 'editor';
+  state.lastCaret = null;
+  state.current = 0;
+  el.coverTitle.value = '';
+  el.coverBody.value = '';
+  setEditorValue('', false);
+  syncCards(); buildPreviews(); saveProject();
+  say('Рабочая зона очищена');
+}
+
+/* --------------------------------------------------------------- события */
+
+function wireEvents() {
+  el.coverTitle.addEventListener('input', () => {
+    state.cover.title = el.coverTitle.value;
+    scheduleRender(); saveProject();
+  });
+  el.coverBody.addEventListener('input', () => {
+    state.cover.body = el.coverBody.value;
+    scheduleRender(); saveProject();
+  });
+
+  document.querySelectorAll('.stepper').forEach(stepper => {
+    stepper.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const delta = Number(btn.dataset.step);
+        const isTitle = stepper.dataset.for === 'coverTitle';
+        const key = isTitle ? 'coverTitleSize' : 'coverBodySize';
+        state[key] = Math.max(8, Math.min(300, state[key] + delta));
+        (isTitle ? el.coverTitleSize : el.coverBodySize).textContent = String(state[key]);
+        syncCards(); scheduleRender(); saveProject();
+      });
+    });
+  });
+
+  el.cardsText.addEventListener('input', onEditorInput);
+  ['click', 'keyup', 'focus'].forEach(ev =>
+    el.cardsText.addEventListener(ev, () => {
+      rememberEditorFocus();
+      syncTypographyControls();
+      revealActiveCard();
+    }));
+  document.addEventListener('selectionchange', () => {
+    if (!rememberEditorFocus()) return;
+    syncTypographyControls();
+    revealActiveCard();
+  });
+  el.coverTitle.addEventListener('focus', () => { state.focusZone = 'coverTitle'; syncTypographyControls(); });
+  el.coverBody.addEventListener('focus', () => { state.focusZone = 'coverBody'; syncTypographyControls(); });
+
+  // вставка из Google Docs, Telegram и Word — с сохранением форматирования
+  // межстрочное, трекинг и выключка — свойства карточки целиком
+  const applyStyle = () => {
+    applyStylePatch({
+      lineHeight: Math.max(80, Math.min(250, Number(el.lineHeight.value) || 122)),
+      letterSpacing: Math.max(-10, Math.min(50, Number(el.letterSpacing.value) || 0)),
+    });
+  };
+  [el.lineHeight, el.letterSpacing].forEach(node => node.addEventListener('input', applyStyle));
+
+  // кегль и начертание: если в поле есть выделение — только для него
+  el.fontSize.addEventListener('change', () => {
+    const size = Math.max(8, Math.min(300, Number(el.fontSize.value) || 36));
+    if (state.focusZone === 'editor' && hasEditorSelection()) restyleSelection({ size });
+    else applyStylePatch({ size });
+  });
+
+  el.fontWeight.addEventListener('change', () => {
+    const bold = el.fontWeight.value === 'Bold';
+    if (state.focusZone === 'editor' && hasEditorSelection()) {
+      const range = getCaretOffset(el.cardsText) || state.lastCaret;
+      const chars = markupToChars(state.cardsText);
+      const picked = chars.slice(range.start, range.end).filter(c => c.ch !== '\n');
+      if (picked.length && picked.every(c => c.bold) === bold) return;
+      restyleSelection({ bold: 'toggle' });
+    } else {
+      applyStylePatch({ weight: el.fontWeight.value });
+    }
+  });
+
+  el.alignGroup.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      el.alignGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      applyStylePatch({ align: btn.dataset.align });
+    });
+  });
+
+  el.exportFormat.addEventListener('change', () => {
+    state.exportFormat = el.exportFormat.value;
+    saveProject();
+  });
+
+  const applyTransform = () => {
+    const card = allCards()[state.current];
+    if (!card) return;
+    card.zoom = 1 + Number(el.rngScale.value) / 100;
+    card.panX = Number(el.rngOffsetX.value);
+    card.panY = Number(el.rngOffsetY.value);
+    card.rotate = Number(el.rngRotate.value);
+    paintTransformOutputs();
+    scheduleRender();
+  };
+  [el.rngScale, el.rngOffsetX, el.rngOffsetY, el.rngRotate]
+    .forEach(node => node.addEventListener('input', applyTransform));
+
+  document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));
+  document.getElementById('btnItalic').addEventListener('click', () => toggleMarkup('_'));
+
+  document.getElementById('btnExportMain').addEventListener('click', exportAll);
+  document.getElementById('btnExportBar').addEventListener('click', exportAll);
+  document.getElementById('btnCopy').addEventListener('click', copyCurrent);
+  document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
+  document.getElementById('btnClear').addEventListener('click', clearAll);
+  document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
+  document.getElementById('btnHelp').addEventListener('click', openHelp);
+  document.getElementById('helpClose').addEventListener('click', closeHelp);
+  document.getElementById('helpModal').addEventListener('click', e => {
+    if (e.target.id === 'helpModal') closeHelp();
+  });
+  document.getElementById('btnSelect').addEventListener('click', () => {
+    el.filePicker.value = '';
+    el.filePicker.click();
+  });
+  document.getElementById('btnFormat').addEventListener('click', e => {
+    const open = el.menu.classList.contains('open');
+    closeMenu();
+    if (!open) formatMenu(e.currentTarget);
+  });
+  document.getElementById('btnTemplates').addEventListener('click', e => {
+    const open = el.menu.classList.contains('open');
+    closeMenu();
+    if (!open) templatesMenu(e.currentTarget);
+  });
+
+  el.filePicker.addEventListener('change', async () => {
+    const file = el.filePicker.files[0];
+    if (file) await setPhoto(state.current, file);
+  });
+
+  el.assetPicker.addEventListener('change', () => {
+    const file = el.assetPicker.files[0];
+    if (!file || !pendingAssetKind) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      state.templates[state.templateName][pendingAssetKind] = reader.result;
+      saveTemplates();
+      await prepareAssets(state.templateName);
+      scheduleRender();
+      say('Загружено: ' + (pendingAssetKind === 'logo' ? 'светлый логотип' : 'тёмный логотип'));
+      pendingAssetKind = null;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  /*
+   * Вставка обрабатывается в одном месте, иначе текст попадал бы в поле
+   * дважды: сначала от обработчика поля, потом от обработчика окна.
+   */
+  window.addEventListener('paste', async e => {
+    const data = e.clipboardData;
+    if (!data) return;
+
+    // картинка из буфера — в выбранную карточку
+    const file = [...(data.items || [])]
+      .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+      .map(it => it.getAsFile())[0];
+    if (file) { e.preventDefault(); await setPhoto(state.current, file); return; }
+
+    const target = e.target;
+    // поля обложки вставляют текст сами
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+
+    const html = data.getData('text/html');
+    const plain = data.getData('text/plain');
+    if (!html && !plain) return;
+    e.preventDefault();
+    const markup = html ? clipboardHtmlToMarkup(html) : clipboardPlainToMarkup(plain);
+    insertMarkup(markup);
+    say(html || markup !== plain ? 'Вставлено с форматированием' : 'Текст вставлен');
+  });
+
+  window.addEventListener('keydown', e => {
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const inField = document.activeElement &&
+      (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
+    if (e.key === 's') { e.preventDefault(); exportAll(); }
+    if (e.key === 'c' && !inField) { e.preventDefault(); copyCurrent(); }
+    // форматирование — только для поля карточек, чтобы не мешать полям обложки
+    if (inField) return;
+    if (e.key === 'b' || e.key === 'и') { e.preventDefault(); toggleMarkup('**'); }
+    if (e.key === 'i' || e.key === 'ш') { e.preventDefault(); toggleMarkup('_'); }
+  });
+
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+  document.addEventListener('click', e => {
+    if (!el.menu.contains(e.target) && !e.target.closest('.bar button')) closeMenu();
+  });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeMenu(); closeHelp(); }
+  });
+  window.addEventListener('resize', () => closeMenu());
+}
+
+/* ------------------------------------------------------ размеры панелей */
+
+const STORE_PANELS = 'cardmaker.panels.v1';
+
+/* Пользователь тянет угол панели — запоминаем размер до следующего раза. */
+function setupPanelResize() {
+  const panels = [...document.querySelectorAll('.panel')];
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(STORE_PANELS) || '{}'); } catch { saved = {}; }
+
+  panels.forEach((panel, i) => {
+    const size = saved[i];
+    if (size) {
+      if (size.w) panel.style.width = size.w + 'px';
+      if (size.h) panel.style.height = size.h + 'px';
+    }
+  });
+
+  if (typeof ResizeObserver === 'undefined') return;
+  let timer = null;
+  const observer = new ResizeObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const data = {};
+      panels.forEach((panel, i) => {
+        data[i] = { w: Math.round(panel.offsetWidth), h: Math.round(panel.offsetHeight) };
+      });
+      try { localStorage.setItem(STORE_PANELS, JSON.stringify(data)); } catch { /* не критично */ }
+      scheduleRender();
+    }, 300);
+  });
+  panels.forEach(panel => observer.observe(panel));
+}
+
+/* ---------------------------------------------------------------- запуск */
+
+function fillControls() {
+  el.coverTitle.value = state.cover.title;
+  el.coverBody.value = state.cover.body;
+  el.coverTitleSize.textContent = String(state.coverTitleSize);
+  el.coverBodySize.textContent = String(state.coverBodySize);
+  setEditorValue(state.cardsText, false);
+  el.exportFormat.value = state.exportFormat;
+  syncTransformControls();
+}
+
+async function start() {
+  paintIcons();
+  loadTemplates();
+  if (!loadProject()) state.cardsText = SAMPLE;
+  await prepareAssets(state.templateName);
+  fillControls();
+  wireEvents();
+  syncCards();
+  buildPreviews();
+  syncTypographyControls();
+  setupPanelResize();
+
+  try {
+    await Promise.all([
+      document.fonts.load('700 60px CardFont'),
+      document.fonts.load('500 45px CardFont'),
+      document.fonts.load('italic 600 36px CardFont'),
+    ]);
+    await document.fonts.ready;
+  } catch { /* если шрифт не подхватился, рисуем системным */ }
+  state.fontsReady = true;
+  renderAll();
+}
+
+start();
