@@ -2850,6 +2850,63 @@ function clearAll() {
   say('Рабочая зона очищена');
 }
 
+/*
+ * Разбивает вставленный текст на карточки по вместимости: пустая строка —
+ * граница абзаца, каждый абзац становится одной строкой карточки. Абзацы
+ * набираются в карточку, пока блок текста (тем же buildBlock/измерением,
+ * что и сам рендер) помещается в белую карточку без фото; как только новый
+ * абзац переполнил бы её — начинается следующая карточка. Существующие
+ * метки //N в тексте не сохраняются — считается, что функция запускается
+ * на только что вставленном необработанном тексте, а не на готовой
+ * раскладке (иначе она бы её просто перемешала).
+ */
+function autoSplitText() {
+  if (!state.fontsReady) { say('Шрифты ещё грузятся — попробуй через секунду'); return; }
+
+  const paragraphs = [];
+  let current = [];
+  for (const line of state.cardsText.split('\n')) {
+    if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) continue;   // старые метки не переносим
+    if (!line.trim()) {
+      if (current.length) { paragraphs.push(current.join(' ')); current = []; }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length) paragraphs.push(current.join(' '));
+  if (!paragraphs.length) { say('Сначала добавь текст, который нужно разбить'); return; }
+
+  if (!confirm('Текущая раскладка на карточки будет заменена — метки //N расставятся заново по объёму текста. Продолжить?')) return;
+
+  const L = LAYOUTS.cardPlain;
+  const [W, H] = FORMATS[state.format];
+  const maxWidth = W - L.marginX * 2;
+  const budget = H - L.marginBottom * 2;
+  const style = defaultTypography({ kind: 'card' });
+  const ctx = document.createElement('canvas').getContext('2d');
+  // между абзацами внутри карточки — пустая строка-отступ, как в обычной разметке
+  const withGaps = paras => paras.flatMap((p, i) => i ? ['', p] : [p]);
+
+  const cardParas = [[]];
+  for (const para of paragraphs) {
+    const last = cardParas[cardParas.length - 1];
+    const attempt = last.concat(para);
+    const { total } = buildBlock(ctx, { kind: 'card', lines: withGaps(attempt) }, L, style, maxWidth);
+    // last.length проверяем, чтобы не зациклиться: одинокий абзац, который
+    // сам по себе больше budget, всё равно остаётся на своей карточке —
+    // её потом подсветит индикатор переполнения (см. renderCard)
+    if (total > budget && last.length) cardParas.push([para]);
+    else cardParas[cardParas.length - 1] = attempt;
+  }
+
+  state.cardsText = cardParas
+    .map((paras, i) => '//' + (i + 1) + '\n' + withGaps(paras).join('\n'))
+    .join('\n\n');
+  setEditorValue(state.cardsText, false);
+  syncCards(); buildPreviews(); saveProject();
+  say('Разбито на карточек: ' + cardParas.length);
+}
+
 /* --------------------------------------------------------------- события */
 
 function wireEvents() {
@@ -2953,6 +3010,7 @@ function wireEvents() {
   [el.rngScale, el.rngOffsetX, el.rngOffsetY, el.rngRotate]
     .forEach(node => node.addEventListener('input', applyTransform));
 
+  document.getElementById('btnAutoSplit').addEventListener('click', autoSplitText);
   document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));
   document.getElementById('btnItalic').addEventListener('click', () => toggleMarkup('_'));
 
