@@ -120,6 +120,16 @@ body {
 .frame:active { cursor: grabbing; }
 .frame.selected { border-color: var(--green); }
 .frame.dropping { border-color: var(--green); filter: brightness(1.05); }
+.frame.dragging { opacity: .4; }
+
+.drag-handle {
+  cursor: grab;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.drag-handle:active { cursor: grabbing; }
 .frame canvas { display: block; width: 100%; height: auto; }
 .frame .empty {
   position: absolute; inset: 0;
@@ -304,6 +314,17 @@ body {
 }
 .align-group button.active { background: var(--white); border-color: var(--hair); }
 .align-group svg { width: 14px; height: 14px; display: block; pointer-events: none; }
+
+.control-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 3px 8px;
+  font: 600 8.5px/1 var(--ui);
+  color: var(--control);
+  cursor: pointer;
+}
+.control-check input { margin: 0; }
 
 .btn-green {
   height: 31px;

@@ -36,6 +36,7 @@ const state = {
   format: DEFAULT_FORMAT,
   exportFormat: 'png',
   exportScale: 1,       // множитель разрешения при экспорте (1×/2×/3×)
+  exportZip: false,     // скачивать все карточки одним ZIP вместо файла за файлом
   coverStyles: { title: {}, body: {} },   // заголовок и подзаголовок обложки — отдельно
   templateName: null,
   templates: {},
@@ -50,7 +51,7 @@ const el = {};
 ['previews', 'coverTitle', 'coverBody', 'coverTitleSize', 'coverBodySize', 'cardsText',
  'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
  'status', 'menu', 'filePicker', 'assetPicker',
- 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale',
+ 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale', 'exportZip',
  'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut']
   .forEach(id => { el[id] = document.getElementById(id); });
 
@@ -115,7 +116,7 @@ function saveProject() {
     coverTitle: state.cover.title, coverBody: state.cover.body,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat, exportScale: state.exportScale,
+    exportFormat: state.exportFormat, exportScale: state.exportScale, exportZip: state.exportZip,
     cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
@@ -132,6 +133,7 @@ function applyProjectData(d) {
   if (FORMATS[d.format]) state.format = d.format;
   if (d.exportFormat) state.exportFormat = d.exportFormat;
   if (d.exportScale && [1, 2, 3].includes(Number(d.exportScale))) state.exportScale = Number(d.exportScale);
+  if (typeof d.exportZip === 'boolean') state.exportZip = d.exportZip;
   if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
   if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
@@ -151,7 +153,7 @@ function exportProjectFile() {
     coverTitle: state.cover.title, coverBody: state.cover.body,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat, exportScale: state.exportScale,
+    exportFormat: state.exportFormat, exportScale: state.exportScale, exportZip: state.exportZip,
     cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
@@ -315,6 +317,26 @@ function commitTransform(index) {
 }
 
 /*
+ * Разбивает текст карточек на блоки по меткам //N: каждый блок — массив
+ * строк от своей метки (включительно) до строки перед следующей меткой.
+ * blocks.map(b => b.join('\n')).join('\n') всегда восстанавливает исходный
+ * текст один в один — блоки партиционируют строки без потерь и наложений.
+ * Общий разбор для duplicateCard()/reorderCard().
+ */
+function splitCardBlocks(text) {
+  const markerRe = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
+  const lines = text.split('\n');
+  const starts = [];
+  let maxNum = 0;
+  lines.forEach((line, i) => {
+    const m = line.trim().match(markerRe);
+    if (m) { starts.push(i); if (m[1]) maxNum = Math.max(maxNum, Number(m[1])); }
+  });
+  const blocks = starts.map((from, i) => lines.slice(from, i + 1 < starts.length ? starts[i + 1] : lines.length));
+  return { blocks, maxNum, markerRe };
+}
+
+/*
  * Дублирует карточку карусели: копирует её текстовый блок (включая метку)
  * сразу после неё, с новым, ещё не занятым номером в метке — чтобы у копии
  * сразу был свой стабильный ключ (см. cardKeys), а не тот же, что у оригинала.
@@ -322,26 +344,17 @@ function commitTransform(index) {
  */
 function duplicateCard(index) {
   if (index < 0 || index >= state.cards.length) return;
+  const { blocks, maxNum, markerRe } = splitCardBlocks(state.cardsText);
+  if (index >= blocks.length) return;
 
-  const markerRe = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
-  const lines = state.cardsText.split('\n');
-  const starts = [];
-  let maxNum = 0;
-  lines.forEach((line, i) => {
-    const m = line.trim().match(markerRe);
-    if (m) { starts.push(i); if (m[1]) maxNum = Math.max(maxNum, Number(m[1])); }
-  });
-  if (index >= starts.length) return;
-
-  const from = starts[index];
-  const to = index + 1 < starts.length ? starts[index + 1] : lines.length;
-  const block = lines.slice(from, to);
-  const markerMatch = lines[from].trim().match(markerRe);
+  const copy = blocks[index].slice();
+  const markerMatch = copy[0].trim().match(markerRe);
   const sign = (markerMatch && markerMatch[2]) || '';
-  block[0] = '//' + (maxNum + 1) + sign;   // у копии — свежий, точно не занятый номер
+  copy[0] = '//' + (maxNum + 1) + sign;   // у копии — свежий, точно не занятый номер
 
   const oldKey = state.cardIds[index];
-  state.cardsText = lines.slice(0, to).concat(block, lines.slice(to)).join('\n');
+  blocks.splice(index + 1, 0, copy);
+  state.cardsText = blocks.map(b => b.join('\n')).join('\n');
   setEditorValue(state.cardsText, false);
   syncCards(); buildPreviews(); saveProject();
 
@@ -354,6 +367,27 @@ function duplicateCard(index) {
   }
   selectCard(index + 2);   // +1 за обложку, +1 — это уже сама копия
   say('Карточка продублирована');
+}
+
+/*
+ * Переставляет карточку карусели на новую позицию, просто переставляя её
+ * текстовый блок в state.cardsText. Фото/стиль/трансформация переезжают
+ * вместе с блоком сами собой — они привязаны к метке, а не к позиции
+ * (см. cardKeys), так что здесь ничего досогласовывать не нужно.
+ */
+function reorderCard(sourceIndex, targetIndex) {
+  if (sourceIndex === targetIndex) return;
+  const { blocks } = splitCardBlocks(state.cardsText);
+  if (sourceIndex < 0 || sourceIndex >= blocks.length || targetIndex < 0 || targetIndex >= blocks.length) return;
+
+  const [moved] = blocks.splice(sourceIndex, 1);
+  blocks.splice(targetIndex, 0, moved);
+
+  state.cardsText = blocks.map(b => b.join('\n')).join('\n');
+  setEditorValue(state.cardsText, false);
+  syncCards(); buildPreviews(); saveProject();
+  selectCard(targetIndex + 1);
+  say('Карточка перемещена');
 }
 
 function allCards() {
@@ -383,6 +417,23 @@ function buildPreviews() {
     frame.className = 'frame' + (i === state.current ? ' selected' : '');
     frame.dataset.index = String(i);
     frame.appendChild(document.createElement('canvas'));
+
+    if (i > 0) {
+      // ручка для перетаскивания — отдельно от рамки, чтобы не мешать
+      // панорамированию фото внутри рамки (там drag уже занят под сдвиг кадра)
+      const grip = document.createElement('span');
+      grip.className = 'drag-handle';
+      grip.textContent = '⠿';
+      grip.title = 'Перетащи, чтобы поменять карточки местами';
+      grip.draggable = true;
+      grip.addEventListener('dragstart', e => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/x-card-index', String(i - 1));
+        frame.classList.add('dragging');
+      });
+      grip.addEventListener('dragend', () => frame.classList.remove('dragging'));
+      label.appendChild(grip);
+    }
 
     const empty = document.createElement('div');
     empty.className = 'empty';
@@ -495,6 +546,13 @@ function attachFrameEvents(frame, index) {
     e.preventDefault();
     e.stopPropagation();   // иначе сработает ещё и общий обработчик пачки на #previews
     frame.classList.remove('dropping');
+
+    const dragIndex = e.dataTransfer.getData('text/x-card-index');
+    if (dragIndex !== '' && index > 0) {
+      reorderCard(Number(dragIndex), index - 1);
+      return;
+    }
+
     selectCard(index);
     const images = [...(e.dataTransfer.files || [])].filter(f => f.type.startsWith('image/'));
     if (!images.length) return;
@@ -656,13 +714,113 @@ function hasContent(c) {
     (c.kind === 'cover' ? Boolean(c.title || c.body) : c.lines.some(l => l.trim()));
 }
 
+function downloadBlob(blob, name) {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+/*
+ * ZIP-архив без сжатия (store): PNG/JPG и так уже сжаты, DEFLATE тут почти
+ * ничего не выигрывает, а store — это десяток строк без внешних библиотек.
+ * files: [{ name, data: Uint8Array }]. Формат проверен побайтово (см. commit).
+ */
+function crc32(bytes) {
+  if (!crc32.table) {
+    const table = new Uint32Array(256);
+    for (let n = 0; n < 256; n++) {
+      let c = n;
+      for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      table[n] = c >>> 0;
+    }
+    crc32.table = table;
+  }
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) crc = crc32.table[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function dosDateTime(date) {
+  const time = ((date.getHours() & 0x1f) << 11) | ((date.getMinutes() & 0x3f) << 5) | ((date.getSeconds() >> 1) & 0x1f);
+  const dosDate = (((date.getFullYear() - 1980) & 0x7f) << 9) | (((date.getMonth() + 1) & 0xf) << 5) | (date.getDate() & 0x1f);
+  return { time, dosDate };
+}
+
+function buildZip(files) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  const { time, dosDate } = dosDateTime(new Date());
+
+  for (const file of files) {
+    const nameBytes = new TextEncoder().encode(file.name);
+    const data = file.data;
+    const crc = crc32(data);
+
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0, true);
+    local.setUint16(8, 0, true);          // метод 0 = store
+    local.setUint16(10, time, true);
+    local.setUint16(12, dosDate, true);
+    local.setUint32(14, crc, true);
+    local.setUint32(18, data.length, true);
+    local.setUint32(22, data.length, true);
+    local.setUint16(26, nameBytes.length, true);
+    local.setUint16(28, 0, true);
+    parts.push(new Uint8Array(local.buffer), nameBytes, data);
+
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0, 0x02014b50, true);
+    ch.setUint16(4, 20, true);
+    ch.setUint16(6, 20, true);
+    ch.setUint16(8, 0, true);
+    ch.setUint16(10, 0, true);
+    ch.setUint16(12, time, true);
+    ch.setUint16(14, dosDate, true);
+    ch.setUint32(16, crc, true);
+    ch.setUint32(20, data.length, true);
+    ch.setUint32(24, data.length, true);
+    ch.setUint16(28, nameBytes.length, true);
+    ch.setUint16(30, 0, true);
+    ch.setUint16(32, 0, true);
+    ch.setUint16(34, 0, true);
+    ch.setUint16(36, 0, true);
+    ch.setUint32(38, 0, true);
+    ch.setUint32(42, offset, true);
+    central.push(new Uint8Array(ch.buffer), nameBytes);
+
+    offset += 30 + nameBytes.length + data.length;
+  }
+
+  const centralSize = central.reduce((s, c) => s + c.length, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, files.length, true);
+  end.setUint16(10, files.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+
+  const all = parts.concat(central, [new Uint8Array(end.buffer)]);
+  const out = new Uint8Array(all.reduce((s, c) => s + c.length, 0));
+  let pos = 0;
+  for (const chunk of all) { out.set(chunk, pos); pos += chunk.length; }
+  return out;
+}
+
 async function exportAll() {
   const list = allCards().filter(hasContent);
   if (!list.length) { say('Пока нечего экспортировать'); return; }
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
-  let n = 0, failed = 0;
+  const rendered = [];
+  let failed = 0;
 
   for (let i = 0; i < list.length; i++) {
     let blob = null;
@@ -673,17 +831,21 @@ async function exportAll() {
     }
     if (!blob) { failed++; continue; }
     const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
-    n++;
-    await new Promise(r => setTimeout(r, 350));
+    rendered.push({ name, blob });
   }
-  say(failed ? `Скачано: ${n}, не получилось: ${failed}` : 'Скачано: ' + n);
+  if (!rendered.length) { say('Не удалось подготовить файлы'); return; }
+
+  if (state.exportZip) {
+    const files = await Promise.all(rendered.map(async r =>
+      ({ name: r.name, data: new Uint8Array(await r.blob.arrayBuffer()) })));
+    downloadBlob(new Blob([buildZip(files)], { type: 'application/zip' }), 'card-maker-export.zip');
+  } else {
+    for (const r of rendered) {
+      downloadBlob(r.blob, r.name);
+      await new Promise(res => setTimeout(res, 350));
+    }
+  }
+  say(failed ? `Скачано: ${rendered.length}, не получилось: ${failed}` : 'Скачано: ' + rendered.length);
 }
 
 async function copyCurrent() {
@@ -1039,6 +1201,10 @@ const HELP = [
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
    'сразу за оригиналом с новым номером в метке.'],
+  ['Порядок карточек',
+   'Значок «⠿» рядом с названием карточки (кроме обложки) — потяни за него ' +
+   'и перетащи на другую карточку, чтобы поменять их местами. Текст, фото ' +
+   'и настройки переезжают вместе с карточкой.'],
   ['Типографика',
    'Настройки применяются туда, где стоит курсор: к выбранной карточке или ' +
    'к полю обложки. Область действия написана зелёным рядом со словом ' +
@@ -1050,9 +1216,10 @@ const HELP = [
   ['Экспорт',
    'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
    'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей. ' +
-   'Кнопка с самолётиком отдаёт карточки в системное окно «Поделиться», ' +
-   'откуда их можно отправить в Telegram. ⌘C копирует выбранную карточку ' +
-   'в буфер обмена.'],
+   'Галочка «Одним ZIP-архивом» — вместо файла за файлом скачивается один ' +
+   'архив со всеми карточками. Кнопка с самолётиком отдаёт карточки ' +
+   'в системное окно «Поделиться», откуда их можно отправить в Telegram. ' +
+   '⌘C копирует выбранную карточку в буфер обмена.'],
   ['Шаблоны',
    'Иконка с сеткой внизу — логотипы проекта и переключение между проектами. ' +
    'Там же, внизу списка — «Сохранить проект в файл» и «Загрузить проект ' +
@@ -1400,6 +1567,10 @@ function wireEvents() {
     state.exportScale = Number(el.exportScale.value) || 1;
     saveProject();
   });
+  el.exportZip.addEventListener('change', () => {
+    state.exportZip = el.exportZip.checked;
+    saveProject();
+  });
 
   const applyTransform = () => {
     const card = allCards()[state.current];
@@ -1570,6 +1741,7 @@ function fillControls() {
   setEditorValue(state.cardsText, false);
   el.exportFormat.value = state.exportFormat;
   el.exportScale.value = String(state.exportScale);
+  el.exportZip.checked = state.exportZip;
   syncTransformControls();
 }
 
