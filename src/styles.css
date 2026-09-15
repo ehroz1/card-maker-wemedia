@@ -66,9 +66,39 @@ body {
   color: var(--muted);
   letter-spacing: .02em;
   margin: 0 0 7px 3px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 .section-label.spaced { margin-top: 18px; }
 .section-label .scope { color: var(--green); text-transform: none; }
+
+.btn-ghost {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: 600 8.5px/1 var(--ui);
+  letter-spacing: .02em;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.btn-ghost:hover { color: var(--green-dark); text-decoration: underline; }
+
+.frame .warn {
+  display: none;
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #d98c00;
+  color: var(--white);
+  font: 700 10px/16px var(--ui);
+  text-align: center;
+  pointer-events: none;
+}
+.frame.overflow .warn { display: block; }
 
 /* ------------------------------------------------------------ превью */
 

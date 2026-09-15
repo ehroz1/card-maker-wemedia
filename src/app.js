@@ -121,10 +121,8 @@ function saveProject() {
   try { localStorage.setItem(STORE_PROJECT, JSON.stringify(data)); } catch { /* не критично */ }
 }
 
-function loadProject() {
-  let d = null;
-  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
-  if (!d) return false;
+/* Переносит сохранённый объект проекта (из localStorage или из файла) в state. */
+function applyProjectData(d) {
   state.cover.title = d.coverTitle || '';
   state.cover.body = d.coverBody || '';
   state.coverTitleSize = d.coverTitleSize || 60;
@@ -135,7 +133,71 @@ function loadProject() {
   if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
   if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
+}
+
+function loadProject() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
+  if (!d) return false;
+  applyProjectData(d);
   return true;
+}
+
+/* Сохраняет проект (без фото — как и localStorage-версия) отдельным файлом. */
+function exportProjectFile() {
+  const data = {
+    coverTitle: state.cover.title, coverBody: state.cover.body,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    cardsText: state.cardsText, format: state.format,
+    exportFormat: state.exportFormat,
+    cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
+    templateName: state.templateName,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'card-maker-project.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  say('Проект сохранён в файл');
+}
+
+/* Загружает проект из файла, сохранённого exportProjectFile(). Фото не переносятся. */
+function importProjectFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let d = null;
+      try { d = JSON.parse(reader.result); } catch { d = null; }
+      if (!d || typeof d !== 'object' || typeof d.cardsText !== 'string') {
+        say('Файл не похож на проект Card Maker');
+        return;
+      }
+      applyProjectData(d);
+      // фото в файл не попадают — старые привязки от предыдущего проекта тоже сбрасываем
+      state.photosById = {};
+      state.transformsById = {};
+      state.current = 0;
+      state.focusZone = 'editor';
+      state.lastCaret = null;
+      fillControls();
+      syncCards();
+      buildPreviews();
+      syncTypographyControls();
+      saveProject();
+      say('Проект загружен из файла — фото нужно добавить заново');
+    };
+    reader.onerror = () => say('Не удалось прочитать файл');
+    reader.readAsText(file);
+  });
+  input.click();
 }
 
 /* ---------------------------------------------------------------- ассеты */
@@ -250,6 +312,48 @@ function commitTransform(index) {
   state.transformsById[key] = { zoom: card.zoom, panX: card.panX, panY: card.panY, rotate: card.rotate };
 }
 
+/*
+ * Дублирует карточку карусели: копирует её текстовый блок (включая метку)
+ * сразу после неё, с новым, ещё не занятым номером в метке — чтобы у копии
+ * сразу был свой стабильный ключ (см. cardKeys), а не тот же, что у оригинала.
+ * Вместе с текстом переносятся фото, ручной стиль и трансформация.
+ */
+function duplicateCard(index) {
+  if (index < 0 || index >= state.cards.length) return;
+
+  const markerRe = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
+  const lines = state.cardsText.split('\n');
+  const starts = [];
+  let maxNum = 0;
+  lines.forEach((line, i) => {
+    const m = line.trim().match(markerRe);
+    if (m) { starts.push(i); if (m[1]) maxNum = Math.max(maxNum, Number(m[1])); }
+  });
+  if (index >= starts.length) return;
+
+  const from = starts[index];
+  const to = index + 1 < starts.length ? starts[index + 1] : lines.length;
+  const block = lines.slice(from, to);
+  const markerMatch = lines[from].trim().match(markerRe);
+  const sign = (markerMatch && markerMatch[2]) || '';
+  block[0] = '//' + (maxNum + 1) + sign;   // у копии — свежий, точно не занятый номер
+
+  const oldKey = state.cardIds[index];
+  state.cardsText = lines.slice(0, to).concat(block, lines.slice(to)).join('\n');
+  setEditorValue(state.cardsText, false);
+  syncCards(); buildPreviews(); saveProject();
+
+  const newKey = state.cardIds[index + 1];
+  if (oldKey && newKey && oldKey !== newKey) {
+    if (state.photosById[oldKey]) state.photosById[newKey] = state.photosById[oldKey];
+    if (state.cardStylesById[oldKey]) state.cardStylesById[newKey] = Object.assign({}, state.cardStylesById[oldKey]);
+    if (state.transformsById[oldKey]) state.transformsById[newKey] = Object.assign({}, state.transformsById[oldKey]);
+    syncCards(); buildPreviews(); saveProject();
+  }
+  selectCard(index + 2);   // +1 за обложку, +1 — это уже сама копия
+  say('Карточка продублирована');
+}
+
 function allCards() {
   return [state.cover].concat(state.cards);
 }
@@ -282,6 +386,12 @@ function buildPreviews() {
     empty.className = 'empty';
     empty.textContent = 'Предпросмотр';
     frame.appendChild(empty);
+
+    const warn = document.createElement('div');
+    warn.className = 'warn';
+    warn.textContent = '!';
+    warn.title = 'Текст не помещается на карточку — уменьши кегль/межстрочный интервал или перенеси часть текста на другую карточку';
+    frame.appendChild(warn);
 
     attachFrameEvents(frame, i);
     item.appendChild(frame);
@@ -470,6 +580,7 @@ function renderAll() {
       const fixed = renderCard(ctx, card, [W, H], assets, gradient);
       card.panX = fixed.panX; card.panY = fixed.panY;
       commitTransform(i);
+      frame.classList.toggle('overflow', Boolean(fixed.overflow));
     } catch (err) {
       console.error('не удалось отрисовать карточку', i, err);
       say('Карточка ' + (i + 1) + ': ошибка отрисовки');
@@ -1040,6 +1151,9 @@ function templatesMenu(anchor) {
       },
     });
   }
+  items.push({ divider: true }, { groupLabel: 'Резервная копия' },
+    { label: 'Сохранить проект в файл…', action: exportProjectFile },
+    { label: 'Загрузить проект из файла…', action: importProjectFile });
   openMenu(anchor, items);
 }
 
@@ -1174,6 +1288,10 @@ function wireEvents() {
   document.getElementById('btnExportMain').addEventListener('click', exportAll);
   document.getElementById('btnExportBar').addEventListener('click', exportAll);
   document.getElementById('btnCopy').addEventListener('click', copyCurrent);
+  document.getElementById('btnDuplicate').addEventListener('click', () => {
+    if (state.current <= 0) { say('Выбери карточку карусели, чтобы её продублировать'); return; }
+    duplicateCard(state.current - 1);
+  });
   document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);

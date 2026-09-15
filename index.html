@@ -76,9 +76,39 @@ body {
   color: var(--muted);
   letter-spacing: .02em;
   margin: 0 0 7px 3px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 .section-label.spaced { margin-top: 18px; }
 .section-label .scope { color: var(--green); text-transform: none; }
+
+.btn-ghost {
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font: 600 8.5px/1 var(--ui);
+  letter-spacing: .02em;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.btn-ghost:hover { color: var(--green-dark); text-decoration: underline; }
+
+.frame .warn {
+  display: none;
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: #d98c00;
+  color: var(--white);
+  font: 700 10px/16px var(--ui);
+  text-align: center;
+  pointer-events: none;
+}
+.frame.overflow .warn { display: block; }
 
 /* ------------------------------------------------------------ превью */
 
@@ -548,7 +578,11 @@ body {
       </div>
     </div>
 
-    <p class="section-label spaced">Карточки</p>
+    <p class="section-label spaced">
+      Карточки
+      <button type="button" class="btn-ghost" id="btnAutoSplit"
+        title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
+    </p>
     <div class="editor-area">
       <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="false"
            role="textbox" aria-multiline="true" aria-label="Текст карточек"
@@ -664,6 +698,7 @@ body {
 <div class="bar">
   <button id="btnSelect" type="button" title="Инструмент выделения" data-icon="select"></button>
   <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
+  <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
   <button id="btnPaste" type="button" title="Вставить фото из буфера обмена" data-icon="paste"></button>
   <button id="btnBold" type="button" title="Жирный (⌘B)" data-icon="bold"></button>
   <button id="btnItalic" type="button" title="Курсив (⌘I)" data-icon="italic"></button>
@@ -701,6 +736,7 @@ const ICONS = {
   'caret': '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M7.94214 3.27249C7.88409 3.21442 7.81518 3.16834 7.73932 3.13691C7.66347 3.10547 7.58216 3.08929 7.50005 3.08929C7.41794 3.08929 7.33664 3.10547 7.26078 3.13691C7.18493 3.16834 7.11601 3.21442 7.05797 3.27249L5.14714 5.18291C5.10807 5.22197 5.05509 5.24391 4.99984 5.24391C4.9446 5.24391 4.89162 5.22197 4.85255 5.18291L2.94214 3.27249C2.82494 3.15525 2.66597 3.08936 2.5002 3.08932C2.33443 3.08928 2.17543 3.15509 2.05818 3.27229C1.94093 3.38948 1.87504 3.54845 1.875 3.71422C1.87496 3.88 1.94078 4.039 2.05797 4.15624L3.9688 6.06708C4.10422 6.20251 4.265 6.30995 4.44194 6.38324C4.61888 6.45654 4.80853 6.49427 5.00005 6.49427C5.19158 6.49427 5.38122 6.45654 5.55817 6.38324C5.73511 6.30995 5.89588 6.20251 6.0313 6.06708L7.94214 4.15624C8.05931 4.03904 8.12513 3.8801 8.12513 3.71437C8.12513 3.54864 8.05931 3.3897 7.94214 3.27249Z" fill="#374957"/> </svg>',
   'clear': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <path d="M25.4999 11.3333H22.9166C22.5179 9.39465 20.8125 8.0025 18.8333 8H17.1666C15.1873 8.0025 13.4819 9.39465 13.0833 11.3333H10.4999C10.0397 11.3333 9.66663 11.7064 9.66663 12.1666C9.66663 12.6269 10.0397 13 10.4999 13H11.3333V23.8333C11.336 26.1334 13.1999 27.9973 15.4999 28H20.4999C22.8 27.9973 24.6639 26.1334 24.6666 23.8333V13H25.4999C25.9602 13 26.3333 12.6269 26.3333 12.1667C26.3333 11.7064 25.9602 11.3333 25.4999 11.3333ZM17.1666 22.1667C17.1666 22.6269 16.7935 23 16.3333 23C15.873 23 15.4999 22.6269 15.4999 22.1667V17.1667C15.4999 16.7064 15.873 16.3334 16.3333 16.3334C16.7935 16.3334 17.1666 16.7064 17.1666 17.1667V22.1667H17.1666ZM20.4999 22.1667C20.4999 22.6269 20.1269 23 19.6666 23C19.2064 23 18.8333 22.6269 18.8333 22.1667V17.1667C18.8333 16.7064 19.2064 16.3334 19.6666 16.3334C20.1269 16.3334 20.4999 16.7064 20.4999 17.1667V22.1667ZM14.8091 11.3333C15.1636 10.3352 16.1075 9.66793 17.1666 9.66664H18.8333C19.8924 9.66793 20.8364 10.3352 21.1908 11.3333H14.8091Z" fill="#414141"/> </svg>',
   'copy': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <path d="M22 18.9V23.1C22 26.6 20.6 28 17.1 28H12.9C9.4 28 8 26.6 8 23.1V18.9C8 15.4 9.4 14 12.9 14H17.1C20.6 14 22 15.4 22 18.9Z" fill="#414141"/> <path d="M23.1 8H18.9C15.8169 8 14.371 9.09409 14.0698 11.739C14.0067 12.2923 14.465 12.75 15.0219 12.75H17.1C21.3 12.75 23.25 14.7 23.25 18.9V20.9781C23.25 21.535 23.7077 21.9933 24.261 21.9303C26.9059 21.629 28 20.1831 28 17.1V12.9C28 9.4 26.6 8 23.1 8Z" fill="#414141"/> </svg>',
+  'duplicate': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <rect x="13" y="7" width="15" height="15" rx="3" fill="#414141" fill-opacity="0.4"/> <rect x="8" y="14" width="15" height="15" rx="3" fill="#414141"/> </svg>',
   'export': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <g clip-path="url(#clip0_2024_536)"> <path d="M16.2318 23.1017C17.2078 24.0783 18.7907 24.0788 19.7674 23.1028C19.7677 23.1024 19.7681 23.1021 19.7685 23.1017L22.4443 20.4259C22.753 20.0845 22.7265 19.5575 22.3851 19.2488C22.0672 18.9614 21.5833 18.962 21.266 19.25L18.8277 21.6892L18.8335 8.83336C18.8335 8.37309 18.4604 8 18.0001 8C17.5399 8 17.1668 8.37309 17.1668 8.83332L17.1593 21.6733L14.7343 19.25C14.4087 18.9246 13.881 18.9248 13.5556 19.2504C13.2302 19.5761 13.2304 20.1038 13.556 20.4292L16.2318 23.1017Z" fill="#414141"/> <path d="M27.1667 21.3333C26.7064 21.3333 26.3334 21.7064 26.3334 22.1666V25.5C26.3334 25.9602 25.9603 26.3333 25.5 26.3333H10.5C10.0398 26.3333 9.66668 25.9602 9.66668 25.5V22.1667C9.66668 21.7064 9.29359 21.3334 8.83336 21.3334C8.37309 21.3333 8 21.7064 8 22.1667V25.5C8 26.8807 9.1193 28 10.5 28H25.5C26.8807 28 28 26.8807 28 25.5V22.1667C28 21.7064 27.6269 21.3333 27.1667 21.3333Z" fill="#414141"/> </g> <defs> <clipPath id="clip0_2024_536"> <rect width="20" height="20" fill="white" transform="translate(8 8)"/> </clipPath> </defs> </svg>',
   'format': '<svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="30" height="30" rx="4.16667" fill="white"/> <g clip-path="url(#clip0_2024_629)"> <path d="M16.9007 16.2133L24.5157 8.59829C25.1485 7.96646 25.2566 6.72431 24.1615 6.04579C23.2245 5.58462 22.4998 5.97771 22.1624 6.37161L14.8557 14.4642C15.7119 14.8053 16.431 15.4204 16.9007 16.2133Z" fill="#414141"/> <path d="M9.16663 20.8333H13.3333C14.714 20.8333 15.8333 19.714 15.8333 18.3333C15.8333 16.9526 14.714 15.8333 13.3333 15.8333C9.99995 15.8333 9.16663 20.8333 9.16663 20.8333Z" fill="#414141"/> <path d="M18.3333 20.8333C18.3333 19.4526 19.4526 18.3333 20.8333 18.3333H25V10.4708L17.4667 18.0042C17.4759 18.115 17.5 18.2209 17.5 18.3334C17.4972 20.6334 15.6334 22.4973 13.3333 22.5H9.16668C8.24621 22.5001 7.49992 21.754 7.4998 20.8336C7.4998 20.7416 7.50738 20.6498 7.5225 20.5592C7.90082 18.2909 9.44582 14.5309 12.85 14.1992L20.9208 5.26082C21.0001 5.18094 21.0836 5.10527 21.1708 5.03414C21.0575 5.025 20.9492 5 20.8333 5H9.16668C6.86664 5.00277 5.00277 6.86664 5 9.16668V20.8334C5.00277 23.1334 6.86664 24.9973 9.16668 25H18.3334V20.8333H18.3333Z" fill="#414141"/> <path d="M20.8333 20C20.3731 20 20 20.3731 20 20.8333V24.75C20.5879 24.5484 21.1228 24.2168 21.565 23.78L23.78 21.565C24.2168 21.1228 24.5484 20.5879 24.75 20H20.8333Z" fill="#414141"/> </g> <defs> <clipPath id="clip0_2024_629"> <rect width="20" height="20" fill="white" transform="translate(5 5)"/> </clipPath> </defs> </svg>',
   'help': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none"> <rect width="36" height="36" rx="5" fill="#fff"/> <circle cx="18" cy="18" r="9.2" stroke="#414141" stroke-width="1.9"/> <path d="M15.3 15.2c0-1.5 1.2-2.7 2.8-2.7 1.5 0 2.7 1.1 2.7 2.5 0 2.3-2.7 2.2-2.7 4.4" stroke="#414141" stroke-width="1.9" stroke-linecap="round"/> <circle cx="18.1" cy="23.2" r="1.25" fill="#414141"/> </svg>',
@@ -1276,6 +1312,9 @@ function renderCard(ctx, card, size, assets, gradient) {
                                          : (assets.logo || assets.logoDark), L);
 
   // --- текст
+  // overflow: текста больше, чем помещается в отведённое место без наложения
+  // на фото/логотип или верхний край карточки — сигнал для UI подсветить карточку
+  let overflow = false;
   if (total > 0) {
     let y;
     if (L.anchor === 'bottom') {
@@ -1283,14 +1322,16 @@ function renderCard(ctx, card, size, assets, gradient) {
       // если полоса упёрлась в минимум, текст начинается сразу под ней
       if (hasPhoto && L.photoMode === 'band') {
         const floor = bandH + gapPhoto - topInk;
-        if (y < floor) y = floor;
+        if (y < floor) { y = floor; overflow = true; }
       }
+      if (y < EDGE_GUARD) overflow = true;
     } else if (L.anchor === 'center') {
       y = (H - total) / 2;
+      if (y < EDGE_GUARD) overflow = true;
     } else {
       y = bandH + gapPhoto - topInk;
       const limit = H - EDGE_GUARD - total;
-      if (y > limit) y = Math.max(bandH + 20, limit);
+      if (y > limit) { y = Math.max(bandH + 20, limit); overflow = true; }
     }
 
     const color = card.kind === 'cover' ? L.titleColor : L.textColor;
@@ -1304,7 +1345,7 @@ function renderCard(ctx, card, size, assets, gradient) {
 
   if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
   ctx.restore();
-  return { panX, panY };
+  return { panX, panY, overflow };
 }
 
 /*
@@ -1687,10 +1728,8 @@ function saveProject() {
   try { localStorage.setItem(STORE_PROJECT, JSON.stringify(data)); } catch { /* не критично */ }
 }
 
-function loadProject() {
-  let d = null;
-  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
-  if (!d) return false;
+/* Переносит сохранённый объект проекта (из localStorage или из файла) в state. */
+function applyProjectData(d) {
   state.cover.title = d.coverTitle || '';
   state.cover.body = d.coverBody || '';
   state.coverTitleSize = d.coverTitleSize || 60;
@@ -1701,7 +1740,71 @@ function loadProject() {
   if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
   if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
+}
+
+function loadProject() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
+  if (!d) return false;
+  applyProjectData(d);
   return true;
+}
+
+/* Сохраняет проект (без фото — как и localStorage-версия) отдельным файлом. */
+function exportProjectFile() {
+  const data = {
+    coverTitle: state.cover.title, coverBody: state.cover.body,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    cardsText: state.cardsText, format: state.format,
+    exportFormat: state.exportFormat,
+    cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
+    templateName: state.templateName,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = 'card-maker-project.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  say('Проект сохранён в файл');
+}
+
+/* Загружает проект из файла, сохранённого exportProjectFile(). Фото не переносятся. */
+function importProjectFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      let d = null;
+      try { d = JSON.parse(reader.result); } catch { d = null; }
+      if (!d || typeof d !== 'object' || typeof d.cardsText !== 'string') {
+        say('Файл не похож на проект Card Maker');
+        return;
+      }
+      applyProjectData(d);
+      // фото в файл не попадают — старые привязки от предыдущего проекта тоже сбрасываем
+      state.photosById = {};
+      state.transformsById = {};
+      state.current = 0;
+      state.focusZone = 'editor';
+      state.lastCaret = null;
+      fillControls();
+      syncCards();
+      buildPreviews();
+      syncTypographyControls();
+      saveProject();
+      say('Проект загружен из файла — фото нужно добавить заново');
+    };
+    reader.onerror = () => say('Не удалось прочитать файл');
+    reader.readAsText(file);
+  });
+  input.click();
 }
 
 /* ---------------------------------------------------------------- ассеты */
@@ -1816,6 +1919,48 @@ function commitTransform(index) {
   state.transformsById[key] = { zoom: card.zoom, panX: card.panX, panY: card.panY, rotate: card.rotate };
 }
 
+/*
+ * Дублирует карточку карусели: копирует её текстовый блок (включая метку)
+ * сразу после неё, с новым, ещё не занятым номером в метке — чтобы у копии
+ * сразу был свой стабильный ключ (см. cardKeys), а не тот же, что у оригинала.
+ * Вместе с текстом переносятся фото, ручной стиль и трансформация.
+ */
+function duplicateCard(index) {
+  if (index < 0 || index >= state.cards.length) return;
+
+  const markerRe = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
+  const lines = state.cardsText.split('\n');
+  const starts = [];
+  let maxNum = 0;
+  lines.forEach((line, i) => {
+    const m = line.trim().match(markerRe);
+    if (m) { starts.push(i); if (m[1]) maxNum = Math.max(maxNum, Number(m[1])); }
+  });
+  if (index >= starts.length) return;
+
+  const from = starts[index];
+  const to = index + 1 < starts.length ? starts[index + 1] : lines.length;
+  const block = lines.slice(from, to);
+  const markerMatch = lines[from].trim().match(markerRe);
+  const sign = (markerMatch && markerMatch[2]) || '';
+  block[0] = '//' + (maxNum + 1) + sign;   // у копии — свежий, точно не занятый номер
+
+  const oldKey = state.cardIds[index];
+  state.cardsText = lines.slice(0, to).concat(block, lines.slice(to)).join('\n');
+  setEditorValue(state.cardsText, false);
+  syncCards(); buildPreviews(); saveProject();
+
+  const newKey = state.cardIds[index + 1];
+  if (oldKey && newKey && oldKey !== newKey) {
+    if (state.photosById[oldKey]) state.photosById[newKey] = state.photosById[oldKey];
+    if (state.cardStylesById[oldKey]) state.cardStylesById[newKey] = Object.assign({}, state.cardStylesById[oldKey]);
+    if (state.transformsById[oldKey]) state.transformsById[newKey] = Object.assign({}, state.transformsById[oldKey]);
+    syncCards(); buildPreviews(); saveProject();
+  }
+  selectCard(index + 2);   // +1 за обложку, +1 — это уже сама копия
+  say('Карточка продублирована');
+}
+
 function allCards() {
   return [state.cover].concat(state.cards);
 }
@@ -1848,6 +1993,12 @@ function buildPreviews() {
     empty.className = 'empty';
     empty.textContent = 'Предпросмотр';
     frame.appendChild(empty);
+
+    const warn = document.createElement('div');
+    warn.className = 'warn';
+    warn.textContent = '!';
+    warn.title = 'Текст не помещается на карточку — уменьши кегль/межстрочный интервал или перенеси часть текста на другую карточку';
+    frame.appendChild(warn);
 
     attachFrameEvents(frame, i);
     item.appendChild(frame);
@@ -2036,6 +2187,7 @@ function renderAll() {
       const fixed = renderCard(ctx, card, [W, H], assets, gradient);
       card.panX = fixed.panX; card.panY = fixed.panY;
       commitTransform(i);
+      frame.classList.toggle('overflow', Boolean(fixed.overflow));
     } catch (err) {
       console.error('не удалось отрисовать карточку', i, err);
       say('Карточка ' + (i + 1) + ': ошибка отрисовки');
@@ -2606,6 +2758,9 @@ function templatesMenu(anchor) {
       },
     });
   }
+  items.push({ divider: true }, { groupLabel: 'Резервная копия' },
+    { label: 'Сохранить проект в файл…', action: exportProjectFile },
+    { label: 'Загрузить проект из файла…', action: importProjectFile });
   openMenu(anchor, items);
 }
 
@@ -2740,6 +2895,10 @@ function wireEvents() {
   document.getElementById('btnExportMain').addEventListener('click', exportAll);
   document.getElementById('btnExportBar').addEventListener('click', exportAll);
   document.getElementById('btnCopy').addEventListener('click', copyCurrent);
+  document.getElementById('btnDuplicate').addEventListener('click', () => {
+    if (state.current <= 0) { say('Выбери карточку карусели, чтобы её продублировать'); return; }
+    duplicateCard(state.current - 1);
+  });
   document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);

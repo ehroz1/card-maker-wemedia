@@ -556,6 +556,9 @@ function renderCard(ctx, card, size, assets, gradient) {
                                          : (assets.logo || assets.logoDark), L);
 
   // --- текст
+  // overflow: текста больше, чем помещается в отведённое место без наложения
+  // на фото/логотип или верхний край карточки — сигнал для UI подсветить карточку
+  let overflow = false;
   if (total > 0) {
     let y;
     if (L.anchor === 'bottom') {
@@ -563,14 +566,16 @@ function renderCard(ctx, card, size, assets, gradient) {
       // если полоса упёрлась в минимум, текст начинается сразу под ней
       if (hasPhoto && L.photoMode === 'band') {
         const floor = bandH + gapPhoto - topInk;
-        if (y < floor) y = floor;
+        if (y < floor) { y = floor; overflow = true; }
       }
+      if (y < EDGE_GUARD) overflow = true;
     } else if (L.anchor === 'center') {
       y = (H - total) / 2;
+      if (y < EDGE_GUARD) overflow = true;
     } else {
       y = bandH + gapPhoto - topInk;
       const limit = H - EDGE_GUARD - total;
-      if (y > limit) y = Math.max(bandH + 20, limit);
+      if (y > limit) { y = Math.max(bandH + 20, limit); overflow = true; }
     }
 
     const color = card.kind === 'cover' ? L.titleColor : L.textColor;
@@ -584,5 +589,5 @@ function renderCard(ctx, card, size, assets, gradient) {
 
   if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
   ctx.restore();
-  return { panX, panY };
+  return { panX, panY, overflow };
 }

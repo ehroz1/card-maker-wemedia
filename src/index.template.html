@@ -42,7 +42,11 @@ __CSS__
       </div>
     </div>
 
-    <p class="section-label spaced">Карточки</p>
+    <p class="section-label spaced">
+      Карточки
+      <button type="button" class="btn-ghost" id="btnAutoSplit"
+        title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
+    </p>
     <div class="editor-area">
       <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="false"
            role="textbox" aria-multiline="true" aria-label="Текст карточек"
@@ -158,6 +162,7 @@ __CSS__
 <div class="bar">
   <button id="btnSelect" type="button" title="Инструмент выделения" data-icon="select"></button>
   <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
+  <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
   <button id="btnPaste" type="button" title="Вставить фото из буфера обмена" data-icon="paste"></button>
   <button id="btnBold" type="button" title="Жирный (⌘B)" data-icon="bold"></button>
   <button id="btnItalic" type="button" title="Курсив (⌘I)" data-icon="italic"></button>
