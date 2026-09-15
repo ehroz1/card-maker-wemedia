@@ -413,6 +413,20 @@ function coverCrop(img, targetW, targetH, zoom, panX, panY) {
 }
 
 /*
+ * Строка для ctx.filter из настроек ч/б, яркости и контраста карточки.
+ * 100% яркости/контраста — нейтральное значение, ничего не меняет.
+ */
+function photoFilterCss(card) {
+  const parts = [];
+  if (card.grayscale) parts.push('grayscale(100%)');
+  const brightness = card.brightness || 100;
+  if (brightness !== 100) parts.push(`brightness(${brightness}%)`);
+  const contrast = card.contrast || 100;
+  if (contrast !== 100) parts.push(`contrast(${contrast}%)`);
+  return parts.length ? parts.join(' ') : 'none';
+}
+
+/*
  * Рисует фотографию в область (0,0,W,H) с масштабом, сдвигом и поворотом.
  * При повороте область докрывается с запасом, чтобы по углам не было пустот.
  */
@@ -427,6 +441,9 @@ function drawPhoto(ctx, img, W, H, card) {
   const c = coverCrop(img, needW, needH, card.zoom, card.panX, card.panY);
 
   ctx.save();
+  // старые браузеры без ctx.filter просто рисуют фото без ч/б/яркости/контраста —
+  // деградирует мягко, как letterSpacing чуть выше по файлу
+  if ('filter' in ctx) ctx.filter = photoFilterCss(card);
   ctx.translate(W / 2, H / 2);
   if (angle) ctx.rotate(angle);
   ctx.drawImage(img, c.dx - needW / 2, c.dy - needH / 2, c.drawW, c.drawH);

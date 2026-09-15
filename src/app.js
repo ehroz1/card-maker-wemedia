@@ -21,7 +21,8 @@ _Лаура Саламат, Enterprise Architect — сооснователь с
 
 const state = {
   cover: { kind: 'cover', title: '', body: '', img: null, usePhoto: true,
-           zoom: 1, panX: 0, panY: 0, rotate: 0, style: null },
+           zoom: 1, panX: 0, panY: 0, rotate: 0,
+           grayscale: false, brightness: 100, contrast: 100, style: null },
   coverTitleSize: 60,
   coverBodySize: 45,
   cardsText: '',
@@ -56,7 +57,8 @@ const el = {};
  'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
  'status', 'menu', 'filePicker', 'assetPicker',
  'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale', 'exportZip',
- 'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut']
+ 'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut',
+ 'chkGrayscale', 'rngBrightness', 'rngContrast', 'brightnessOut', 'contrastOut']
   .forEach(id => { el[id] = document.getElementById(id); });
 
 /* --------------------------------------------------- поле ввода карточек */
@@ -302,6 +304,9 @@ function syncCards() {
       panX: t.panX || 0,
       panY: t.panY || 0,
       rotate: t.rotate || 0,
+      grayscale: t.grayscale || false,
+      brightness: t.brightness || 100,
+      contrast: t.contrast || 100,
       style: state.cardStylesById[key] || {},
     };
   });
@@ -322,7 +327,10 @@ function commitTransform(index) {
   const key = state.cardIds[index - 1];
   const card = state.cards[index - 1];
   if (!key || !card) return;
-  state.transformsById[key] = { zoom: card.zoom, panX: card.panX, panY: card.panY, rotate: card.rotate };
+  state.transformsById[key] = {
+    zoom: card.zoom, panX: card.panX, panY: card.panY, rotate: card.rotate,
+    grayscale: card.grayscale, brightness: card.brightness, contrast: card.contrast,
+  };
 }
 
 /*
@@ -705,6 +713,9 @@ function syncTransformControls() {
   el.rngOffsetX.value = String(Math.round(card.panX || 0));
   el.rngOffsetY.value = String(Math.round(card.panY || 0));
   el.rngRotate.value = String(Math.round(card.rotate || 0));
+  el.chkGrayscale.checked = Boolean(card.grayscale);
+  el.rngBrightness.value = String(Math.round(card.brightness || 100));
+  el.rngContrast.value = String(Math.round(card.contrast || 100));
   paintTransformOutputs();
 }
 
@@ -713,6 +724,8 @@ function paintTransformOutputs() {
   el.offsetXOut.textContent = el.rngOffsetX.value + ' пикселей';
   el.offsetYOut.textContent = el.rngOffsetY.value + ' пикселей';
   el.rotateOut.textContent = el.rngRotate.value + '°';
+  el.brightnessOut.textContent = el.rngBrightness.value + '%';
+  el.contrastOut.textContent = el.rngContrast.value + '%';
 }
 
 /* ------------------------------------------------------------------ фото */
@@ -738,13 +751,17 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
     if (index === 0) {
       state.cover.img = img;
       state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+      state.cover.grayscale = false; state.cover.brightness = 100; state.cover.contrast = 100;
     } else {
       const key = state.cardIds[index - 1];
       if (key === undefined) return;
       state.photosById[key] = img;
-      delete state.transformsById[key];   // новое фото — трансформация сбрасывается
+      delete state.transformsById[key];   // новое фото — трансформация и фильтры сбрасываются
       const card = state.cards[index - 1];
-      if (card) { card.img = img; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0; }
+      if (card) {
+        card.img = img; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+        card.grayscale = false; card.brightness = 100; card.contrast = 100;
+      }
     }
     selectCard(index);
     scheduleRender();
@@ -762,12 +779,14 @@ function removePhoto(index) {
   if (index === 0) {
     state.cover.img = null;
     state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+    state.cover.grayscale = false; state.cover.brightness = 100; state.cover.contrast = 100;
   } else {
     const key = state.cardIds[index - 1];
     if (key === undefined) return;
     delete state.photosById[key];
     delete state.transformsById[key];
     card.img = null; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+    card.grayscale = false; card.brightness = 100; card.contrast = 100;
   }
   scheduleRender();
   say('Фото убрано');
@@ -1360,7 +1379,8 @@ const HELP = [
    'Если перетащить или выбрать сразу несколько фото, они разложатся по ' +
    'карточкам по порядку, пропуская карточки без фото (//N-). Крестик ' +
    'в углу превью (появляется, если на карточке есть фото) убирает фото ' +
-   'обратно — текст при этом не трогается.'],
+   'обратно — текст при этом не трогается. В блоке «Трансформация» — ещё ' +
+   'чёрно-белое, яркость и контраст, тоже для фото выбранной карточки.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -1838,12 +1858,16 @@ function wireEvents() {
     card.panX = Number(el.rngOffsetX.value);
     card.panY = Number(el.rngOffsetY.value);
     card.rotate = Number(el.rngRotate.value);
+    card.grayscale = el.chkGrayscale.checked;
+    card.brightness = Number(el.rngBrightness.value);
+    card.contrast = Number(el.rngContrast.value);
     commitTransform(state.current);
     paintTransformOutputs();
     scheduleRender();
   };
-  [el.rngScale, el.rngOffsetX, el.rngOffsetY, el.rngRotate]
+  [el.rngScale, el.rngOffsetX, el.rngOffsetY, el.rngRotate, el.rngBrightness, el.rngContrast]
     .forEach(node => node.addEventListener('input', applyTransform));
+  el.chkGrayscale.addEventListener('change', applyTransform);
 
   document.getElementById('btnAutoSplit').addEventListener('click', autoSplitText);
   document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));

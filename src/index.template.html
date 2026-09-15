@@ -141,6 +141,18 @@ __CSS__
         <div class="range-head"><span>Поворот</span><output id="rotateOut">0°</output></div>
         <input type="range" id="rngRotate" min="-180" max="180" step="1" value="0" aria-label="Поворот картинки">
       </div>
+      <label class="control-check">
+        <input type="checkbox" id="chkGrayscale">
+        <span>Чёрно-белое</span>
+      </label>
+      <div class="range-row">
+        <div class="range-head"><span>Яркость</span><output id="brightnessOut">100%</output></div>
+        <input type="range" id="rngBrightness" min="50" max="150" step="1" value="100" aria-label="Яркость картинки">
+      </div>
+      <div class="range-row">
+        <div class="range-head"><span>Контраст</span><output id="contrastOut">100%</output></div>
+        <input type="range" id="rngContrast" min="50" max="150" step="1" value="100" aria-label="Контраст картинки">
+      </div>
 
       <p class="section-label spaced">Экспорт</p>
       <div class="control-row">
