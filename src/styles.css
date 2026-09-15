@@ -447,6 +447,7 @@ body {
 .bar button svg { display: block; width: 36px; height: 36px; }
 .bar button.small svg { width: 30px; height: 30px; }
 .bar button:hover { filter: brightness(.94); }
+.bar button:disabled { opacity: .35; cursor: default; pointer-events: none; }
 .bar .sep { width: 1px; height: 26px; background: var(--border); flex: none; }
 
 /* -------------------------------------------------------------- меню */

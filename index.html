@@ -459,6 +459,7 @@ body {
 .bar button svg { display: block; width: 36px; height: 36px; }
 .bar button.small svg { width: 30px; height: 30px; }
 .bar button:hover { filter: brightness(.94); }
+.bar button:disabled { opacity: .35; cursor: default; pointer-events: none; }
 .bar .sep { width: 1px; height: 26px; background: var(--border); flex: none; }
 
 /* -------------------------------------------------------------- меню */
@@ -750,6 +751,9 @@ body {
 
 <!-- --------------------------------------------------- нижняя панель -->
 <div class="bar">
+  <button id="btnUndo" type="button" title="Отменить (⌘Z)" data-icon="undo"></button>
+  <button id="btnRedo" type="button" title="Повторить (⌘⇧Z)" data-icon="redo"></button>
+  <span class="sep"></span>
   <button id="btnSelect" type="button" title="Инструмент выделения" data-icon="select"></button>
   <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
   <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
@@ -798,9 +802,11 @@ const ICONS = {
   'letter-spacing': '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M1.10892 8L3.1511 2.74478C3.27817 2.40896 3.46423 2.15028 3.7093 1.96876C3.95436 1.77815 4.34918 1.68285 4.89376 1.68285C5.34758 1.68285 5.7061 1.76908 5.96931 1.94153C6.23252 2.11398 6.43674 2.38173 6.58196 2.74478L8.65138 8H6.67727L6.09184 6.48879H3.0558L2.51121 8H1.10892ZM3.35532 5.76721H5.75148L4.96183 3.56166C4.9346 3.47089 4.89376 3.38921 4.8393 3.3166C4.79392 3.23491 4.70316 3.19406 4.56701 3.19406C4.41271 3.19406 4.30833 3.23491 4.25388 3.3166C4.2085 3.38921 4.16765 3.47089 4.13135 3.56166L3.35532 5.76721Z" fill="#414141"/> <rect x="1" width="10" height="1" rx="0.5" transform="rotate(90 1 0)" fill="#414141"/> <rect x="10" width="10" height="1" rx="0.5" transform="rotate(90 10 0)" fill="#414141"/> </svg>',
   'line-height': '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M1.10892 8L3.1511 2.74478C3.27817 2.40896 3.46423 2.15028 3.7093 1.96876C3.95436 1.77815 4.34918 1.68285 4.89376 1.68285C5.34758 1.68285 5.7061 1.76908 5.96931 1.94153C6.23252 2.11398 6.43674 2.38173 6.58196 2.74478L8.65138 8H6.67727L6.09184 6.48879H3.0558L2.51121 8H1.10892ZM3.35532 5.76721H5.75148L4.96183 3.56166C4.9346 3.47089 4.89376 3.38921 4.8393 3.3166C4.79392 3.23491 4.70316 3.19406 4.56701 3.19406C4.41271 3.19406 4.30833 3.23491 4.25388 3.3166C4.2085 3.38921 4.16765 3.47089 4.13135 3.56166L3.35532 5.76721Z" fill="#414141"/> <rect y="9" width="10" height="1" rx="0.5" fill="#414141"/> <rect width="10" height="1" rx="0.5" fill="#414141"/> </svg>',
   'paste': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <path d="M18.8334 11.3333C18.8334 11.5543 18.9212 11.7663 19.0775 11.9226C19.2338 12.0789 19.4457 12.1667 19.6667 12.1667H22.9717C22.9104 11.6256 22.6729 11.1196 22.2959 10.7267L20.3926 8.76083C19.9762 8.33879 19.4238 8.07781 18.8334 8.02417V11.3333ZM17.1667 11.3333V8H13.8334C12.7288 8.00132 11.6697 8.44073 10.8886 9.22185C10.1075 10.003 9.66807 11.062 9.66675 12.1667V20.5C9.66807 21.6047 10.1075 22.6637 10.8886 23.4448C11.6697 24.2259 12.7288 24.6653 13.8334 24.6667H18.8334C19.9381 24.6653 20.9971 24.2259 21.7782 23.4448C22.5593 22.6637 22.9988 21.6047 23.0001 20.5V13.8333H19.6667C19.0037 13.8333 18.3678 13.5699 17.899 13.1011C17.4301 12.6323 17.1667 11.9964 17.1667 11.3333V11.3333ZM22.1667 28H14.6667C14.4457 28 14.2338 27.9122 14.0775 27.7559C13.9212 27.5996 13.8334 27.3877 13.8334 27.1667C13.8334 26.9457 13.9212 26.7337 14.0775 26.5774C14.2338 26.4211 14.4457 26.3333 14.6667 26.3333H22.1667C22.8298 26.3333 23.4657 26.0699 23.9345 25.6011C24.4034 25.1323 24.6667 24.4964 24.6667 23.8333V14.6667C24.6667 14.4457 24.7545 14.2337 24.9108 14.0774C25.0671 13.9211 25.2791 13.8333 25.5001 13.8333C25.7211 13.8333 25.9331 13.9211 26.0893 14.0774C26.2456 14.2337 26.3334 14.4457 26.3334 14.6667V23.8333C26.3321 24.938 25.8927 25.997 25.1116 26.7782C24.3305 27.5593 23.2714 27.9987 22.1667 28V28Z" fill="#414141"/> </svg>',
+  'redo': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <path d="M24 14H15C11.6863 14 9 16.6863 9 20C9 23.3137 11.6863 26 15 26H20" stroke="#414141" stroke-width="2.2" stroke-linecap="round"/> <path d="M20.5 10L25.5 14L20.5 18" stroke="#414141" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/> </svg>',
   'select': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="#0DAC67"/> <path d="M11.6942 12.8181C11.4083 12.0448 12.1284 11.2772 12.9184 11.5132L26.1149 15.4555C27.0002 15.72 27.084 16.9407 26.2433 17.3237L20.8746 19.7695C20.6346 19.8788 20.4476 20.0784 20.3541 20.325L18.3212 25.6867C17.9934 26.5511 16.7687 26.546 16.4482 25.6789L11.6942 12.8181Z" fill="white"/> </svg>',
   'telegram': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none"> <rect width="36" height="36" rx="5" fill="#fff"/> <path d="M26.4 10.3 9.9 16.7c-1 .4-1 1.8.1 2.1l4.1 1.3 1.6 5c.3.9 1.4 1.1 2 .5l2.3-2.2 4.2 3.1c.7.5 1.7.1 1.9-.7l3-13.7c.2-1-.8-1.9-1.7-1.5z" fill="#0dac67"/> <path d="m14.4 20.4 9.3-6.2-7.5 7.2-.3 3.4-1.5-4.4z" fill="#0a8d54"/> </svg>',
-  'templates': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <g clip-path="url(#clip0_2024_599)"> <path d="M9.66668 22.5833H11.75C12.6705 22.5833 13.4167 23.3295 13.4167 24.25V26.3333C13.4167 27.2538 12.6705 28 11.75 28H9.66668C8.74621 28 8 27.2538 8 26.3333V24.25C8 23.3295 8.74621 22.5833 9.66668 22.5833Z" fill="#414141"/> <path d="M27.2651 22.8683C26.9901 22.682 26.6655 22.5827 26.3334 22.5833H24.2501C23.3296 22.5833 22.5834 23.3294 22.5834 24.2499V26.3333C22.5834 27.2538 23.3296 27.9999 24.2501 27.9999H26.3334C27.2539 27.9999 28.0001 27.2538 28.0001 26.3333V24.2499C28 23.6958 27.7245 23.178 27.2651 22.8683Z" fill="#414141"/> <path d="M9.66668 15.2917H11.75C12.6705 15.2917 13.4167 16.0379 13.4167 16.9584V19.0417C13.4167 19.9622 12.6705 20.7084 11.75 20.7084H9.66668C8.74621 20.7083 8 19.9622 8 19.0417V16.9584C8 16.0379 8.74621 15.2917 9.66668 15.2917Z" fill="#414141"/> <path d="M27.2651 15.5766C26.9901 15.3904 26.6655 15.2911 26.3334 15.2916H24.2501C23.3296 15.2916 22.5834 16.0378 22.5834 16.9583V19.0416C22.5834 19.9621 23.3296 20.7083 24.2501 20.7083H26.3334C27.2538 20.7083 28.0001 19.9621 28.0001 19.0416V16.9583C28 16.4042 27.7245 15.8864 27.2651 15.5766Z" fill="#414141"/> <path d="M9.66668 8H11.75C12.6705 8 13.4167 8.74621 13.4167 9.66668V11.75C13.4167 12.6705 12.6705 13.4167 11.75 13.4167H9.66668C8.74621 13.4167 8 12.6705 8 11.75V9.66668C8 8.74621 8.74621 8 9.66668 8Z" fill="#414141"/> <path d="M19.9733 22.8683C19.6984 22.682 19.3737 22.5827 19.0416 22.5833H16.9583C16.0378 22.5833 15.2916 23.3294 15.2916 24.2499V26.3333C15.2916 27.2537 16.0378 27.9999 16.9583 27.9999H19.0416C19.9621 27.9999 20.7083 27.2538 20.7083 26.3333V24.2499C20.7082 23.6958 20.4328 23.178 19.9733 22.8683Z" fill="#414141"/> <path d="M19.9733 15.5766C19.6984 15.3904 19.3737 15.2911 19.0416 15.2916H16.9583C16.0378 15.2916 15.2916 16.0378 15.2916 16.9583V19.0416C15.2916 19.9621 16.0378 20.7083 16.9583 20.7083H19.0416C19.9621 20.7083 20.7083 19.9621 20.7083 19.0416V16.9583C20.7082 16.4042 20.4328 15.8864 19.9733 15.5766Z" fill="#414141"/> <path d="M19.9733 8.28494C19.6984 8.09869 19.3737 7.99939 19.0416 7.99994H16.9583C16.0378 7.99994 15.2916 8.74615 15.2916 9.66662V11.7499C15.2916 12.6704 16.0378 13.4166 16.9583 13.4166H19.0416C19.9621 13.4166 20.7083 12.6704 20.7083 11.7499V9.66662C20.7082 9.11252 20.4328 8.59467 19.9733 8.28494Z" fill="#414141"/> <path d="M27.7151 8.735C27.4053 8.27555 26.8875 8.00008 26.3334 8H24.2501C23.3296 8 22.5834 8.74621 22.5834 9.66668V11.75C22.5834 12.6705 23.3296 13.4167 24.2501 13.4167H26.3334C27.2539 13.4167 28.0001 12.6705 28.0001 11.75V9.66668C28.0006 9.33457 27.9013 9.00996 27.7151 8.735Z" fill="#414141"/> </g> <defs> <clipPath id="clip0_2024_599"> <rect width="20" height="20" fill="white" transform="translate(8 8)"/> </clipPath> </defs> </svg>'
+  'templates': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <g clip-path="url(#clip0_2024_599)"> <path d="M9.66668 22.5833H11.75C12.6705 22.5833 13.4167 23.3295 13.4167 24.25V26.3333C13.4167 27.2538 12.6705 28 11.75 28H9.66668C8.74621 28 8 27.2538 8 26.3333V24.25C8 23.3295 8.74621 22.5833 9.66668 22.5833Z" fill="#414141"/> <path d="M27.2651 22.8683C26.9901 22.682 26.6655 22.5827 26.3334 22.5833H24.2501C23.3296 22.5833 22.5834 23.3294 22.5834 24.2499V26.3333C22.5834 27.2538 23.3296 27.9999 24.2501 27.9999H26.3334C27.2539 27.9999 28.0001 27.2538 28.0001 26.3333V24.2499C28 23.6958 27.7245 23.178 27.2651 22.8683Z" fill="#414141"/> <path d="M9.66668 15.2917H11.75C12.6705 15.2917 13.4167 16.0379 13.4167 16.9584V19.0417C13.4167 19.9622 12.6705 20.7084 11.75 20.7084H9.66668C8.74621 20.7083 8 19.9622 8 19.0417V16.9584C8 16.0379 8.74621 15.2917 9.66668 15.2917Z" fill="#414141"/> <path d="M27.2651 15.5766C26.9901 15.3904 26.6655 15.2911 26.3334 15.2916H24.2501C23.3296 15.2916 22.5834 16.0378 22.5834 16.9583V19.0416C22.5834 19.9621 23.3296 20.7083 24.2501 20.7083H26.3334C27.2538 20.7083 28.0001 19.9621 28.0001 19.0416V16.9583C28 16.4042 27.7245 15.8864 27.2651 15.5766Z" fill="#414141"/> <path d="M9.66668 8H11.75C12.6705 8 13.4167 8.74621 13.4167 9.66668V11.75C13.4167 12.6705 12.6705 13.4167 11.75 13.4167H9.66668C8.74621 13.4167 8 12.6705 8 11.75V9.66668C8 8.74621 8.74621 8 9.66668 8Z" fill="#414141"/> <path d="M19.9733 22.8683C19.6984 22.682 19.3737 22.5827 19.0416 22.5833H16.9583C16.0378 22.5833 15.2916 23.3294 15.2916 24.2499V26.3333C15.2916 27.2537 16.0378 27.9999 16.9583 27.9999H19.0416C19.9621 27.9999 20.7083 27.2538 20.7083 26.3333V24.2499C20.7082 23.6958 20.4328 23.178 19.9733 22.8683Z" fill="#414141"/> <path d="M19.9733 15.5766C19.6984 15.3904 19.3737 15.2911 19.0416 15.2916H16.9583C16.0378 15.2916 15.2916 16.0378 15.2916 16.9583V19.0416C15.2916 19.9621 16.0378 20.7083 16.9583 20.7083H19.0416C19.9621 20.7083 20.7083 19.9621 20.7083 19.0416V16.9583C20.7082 16.4042 20.4328 15.8864 19.9733 15.5766Z" fill="#414141"/> <path d="M19.9733 8.28494C19.6984 8.09869 19.3737 7.99939 19.0416 7.99994H16.9583C16.0378 7.99994 15.2916 8.74615 15.2916 9.66662V11.7499C15.2916 12.6704 16.0378 13.4166 16.9583 13.4166H19.0416C19.9621 13.4166 20.7083 12.6704 20.7083 11.7499V9.66662C20.7082 9.11252 20.4328 8.59467 19.9733 8.28494Z" fill="#414141"/> <path d="M27.7151 8.735C27.4053 8.27555 26.8875 8.00008 26.3334 8H24.2501C23.3296 8 22.5834 8.74621 22.5834 9.66668V11.75C22.5834 12.6705 23.3296 13.4167 24.2501 13.4167H26.3334C27.2539 13.4167 28.0001 12.6705 28.0001 11.75V9.66668C28.0006 9.33457 27.9013 9.00996 27.7151 8.735Z" fill="#414141"/> </g> <defs> <clipPath id="clip0_2024_599"> <rect width="20" height="20" fill="white" transform="translate(8 8)"/> </clipPath> </defs> </svg>',
+  'undo': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="white"/> <path d="M12 14H21C24.3137 14 27 16.6863 27 20C27 23.3137 24.3137 26 21 26H16" stroke="#414141" stroke-width="2.2" stroke-linecap="round"/> <path d="M15.5 10L10.5 14L15.5 18" stroke="#414141" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/> </svg>'
 };
 
 const BUNDLED_BRAND = {
@@ -1714,6 +1720,8 @@ const state = {
   focusZone: 'editor', // где пользователь работал: editor | coverTitle | coverBody | preview
   lastCaret: null,     // последнее положение курсора в поле карточек
   fontsReady: false,
+  undoStack: [],       // снимки состояния для отмены (см. pushUndo/undo/redo)
+  redoStack: [],
 };
 
 const el = {};
@@ -2015,6 +2023,7 @@ function duplicateCard(index) {
   if (index < 0 || index >= state.cards.length) return;
   const { blocks, maxNum, markerRe } = splitCardBlocks(state.cardsText);
   if (index >= blocks.length) return;
+  pushUndo();
 
   const copy = blocks[index].slice();
   const markerMatch = copy[0].trim().match(markerRe);
@@ -2048,6 +2057,7 @@ function reorderCard(sourceIndex, targetIndex) {
   if (sourceIndex === targetIndex) return;
   const { blocks } = splitCardBlocks(state.cardsText);
   if (sourceIndex < 0 || sourceIndex >= blocks.length || targetIndex < 0 || targetIndex >= blocks.length) return;
+  pushUndo();
 
   const [moved] = blocks.splice(sourceIndex, 1);
   blocks.splice(targetIndex, 0, moved);
@@ -2291,9 +2301,10 @@ function fileToImage(file) {
   });
 }
 
-async function setPhoto(index, file) {
+async function setPhoto(index, file, { skipUndo = false } = {}) {
   try {
     const img = await fileToImage(file);
+    if (!skipUndo) pushUndo();
     if (index === 0) {
       state.cover.img = img;
       state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
@@ -2317,6 +2328,7 @@ async function setPhoto(index, file) {
 function removePhoto(index) {
   const card = allCards()[index];
   if (!card || !card.img) return;
+  pushUndo();
   if (index === 0) {
     state.cover.img = null;
     state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
@@ -2338,13 +2350,15 @@ function removePhoto(index) {
  * нескольких файлов — вместо того чтобы цеплять их к карточкам по одному.
  */
 async function distributePhotos(images, startIndex) {
+  if (!images.length) return 0;
+  pushUndo();   // одна пачка — один шаг отмены, а не по одному на файл
   const list = allCards();
   let idx = Math.max(1, startIndex);
   let used = 0;
   for (const file of images) {
     while (idx < list.length && !list[idx].usePhoto) idx++;
     if (idx >= list.length) break;
-    await setPhoto(idx, file);
+    await setPhoto(idx, file, { skipUndo: true });
     idx++;
     used++;
   }
@@ -2580,6 +2594,7 @@ async function pasteFromClipboard() {
 
 /* Вставляет разметку в место курсора, не полагаясь на команды браузера. */
 function insertMarkup(markup) {
+  pushUndo();
   const range = getCaretOffset(el.cardsText) || state.lastCaret || { start: 0, end: 0 };
   const chars = markupToChars(state.cardsText);
   const added = markupToChars(markup);
@@ -2598,6 +2613,7 @@ function insertText(text) {
 }
 
 function onEditorInput() {
+  pushUndo();   // снимок хватает СТАРЫЙ state.cardsText — пишем его до переприсвоения ниже
   state.cardsText = editorValue();
   syncCards(); buildPreviews(); saveProject();
   syncTypographyControls();
@@ -2739,6 +2755,7 @@ function setSelectValue(select, value) {
 
 /* Записывает изменённую настройку туда, где стоит выделение. */
 function applyStylePatch(patch) {
+  pushUndo();
   const target = activeStyleTarget();
   if (target.kind === 'cover') {
     Object.assign(state.coverStyles[target.field], patch);
@@ -2792,6 +2809,7 @@ function restyleSelection(patch) {
 
   const picked = chars.slice(start, end).filter(c => c.ch !== '\n');
   if (!picked.length) return false;
+  pushUndo();
 
   if (patch.bold === 'toggle') {
     const value = !picked.every(c => c.bold);
@@ -2868,6 +2886,13 @@ const HELP = [
   ['Как устроено окно',
    'Слева — превью всех карточек, посередине — текст, справа — типографика, ' +
    'трансформация картинки и экспорт. Углы панелей можно тянуть, меняя их размер.'],
+  ['Отмена действий',
+   'Две стрелки в начале нижней панели (или ⌘Z / ⌘⇧Z) — отменить/повторить. ' +
+   'Работает для текста, фото, дублирования и перестановки карточек, ' +
+   'автоматической разбивки, очистки рабочей зоны — для всего, что меняет ' +
+   'содержимое проекта. Быстрые правки подряд схлопываются в один шаг. Поля ' +
+   'заголовка и подзаголовка обложки не затрагивает — там штатный ' +
+   'браузерный undo.'],
   ['Обложка',
    'Заголовок и подзаголовок набираются в двух верхних полях. Кегль каждого ' +
    'меняется кнопками − и + справа от поля. Начертание, трекинг и выключку ' +
@@ -3106,9 +3131,101 @@ function pickAsset(kind) {
   el.assetPicker.click();
 }
 
+/* --------------------------------------------------------------- отмена */
+
+/*
+ * Снимок состояния для отмены/повтора: всё, что реально меняют действия
+ * пользователя — текст, стили, фото. Фото — просто ссылки на уже
+ * загруженные Image, копирование снимка их не декодирует заново и почти
+ * ничего не стоит по памяти; cardStylesById/coverStyles/transformsById —
+ * маленькие плоские объекты, их клонируем по-настоящему, чтобы более
+ * позднее изменение не задело сохранённый снимок задним числом.
+ */
+function snapshotState() {
+  return {
+    coverTitle: state.cover.title, coverBody: state.cover.body,
+    coverImg: state.cover.img,
+    coverZoom: state.cover.zoom, coverPanX: state.cover.panX,
+    coverPanY: state.cover.panY, coverRotate: state.cover.rotate,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    cardsText: state.cardsText,
+    coverStyles: JSON.parse(JSON.stringify(state.coverStyles)),
+    cardStylesById: JSON.parse(JSON.stringify(state.cardStylesById)),
+    transformsById: JSON.parse(JSON.stringify(state.transformsById)),
+    photosById: Object.assign({}, state.photosById),
+    current: state.current,
+  };
+}
+
+function restoreSnapshot(snap) {
+  state.cover.title = snap.coverTitle; state.cover.body = snap.coverBody;
+  state.cover.img = snap.coverImg;
+  state.cover.zoom = snap.coverZoom; state.cover.panX = snap.coverPanX;
+  state.cover.panY = snap.coverPanY; state.cover.rotate = snap.coverRotate;
+  state.coverTitleSize = snap.coverTitleSize; state.coverBodySize = snap.coverBodySize;
+  state.cardsText = snap.cardsText;
+  state.coverStyles = snap.coverStyles;
+  state.cardStylesById = snap.cardStylesById;
+  state.transformsById = snap.transformsById;
+  state.photosById = snap.photosById;
+
+  fillControls();
+  syncCards();
+  buildPreviews();
+  syncTypographyControls();
+  saveProject();
+  selectCard(Math.min(snap.current, state.cards.length), { keepZone: true });
+}
+
+const UNDO_LIMIT = 100;
+const UNDO_COALESCE_MS = 600;   // быстрые повторы одного и того же действия — один шаг отмены
+let lastUndoPushAt = 0;
+
+/*
+ * Запоминает состояние ДО изменения — вызывается первой строкой в каждой
+ * функции, которая меняет текст/стили/фото. Быстрые повторы (печать,
+ * перетаскивание ползунка, серия кликов подряд) схлопываются в один шаг —
+ * иначе на каждую букву была бы отдельная отмена, как и в обычных редакторах.
+ */
+function pushUndo() {
+  const now = Date.now();
+  if (now - lastUndoPushAt < UNDO_COALESCE_MS) return;
+  lastUndoPushAt = now;
+  state.undoStack.push(snapshotState());
+  if (state.undoStack.length > UNDO_LIMIT) state.undoStack.shift();
+  state.redoStack.length = 0;
+  syncUndoButtons();
+}
+
+function undo() {
+  if (!state.undoStack.length) { say('Нечего отменять'); return; }
+  state.redoStack.push(snapshotState());
+  restoreSnapshot(state.undoStack.pop());
+  lastUndoPushAt = 0;   // следующее действие должно снова создать свой шаг
+  syncUndoButtons();
+  say('Отменено');
+}
+
+function redo() {
+  if (!state.redoStack.length) { say('Нечего повторить'); return; }
+  state.undoStack.push(snapshotState());
+  restoreSnapshot(state.redoStack.pop());
+  lastUndoPushAt = 0;
+  syncUndoButtons();
+  say('Повторено');
+}
+
+function syncUndoButtons() {
+  const btnUndo = document.getElementById('btnUndo');
+  const btnRedo = document.getElementById('btnRedo');
+  if (btnUndo) btnUndo.disabled = !state.undoStack.length;
+  if (btnRedo) btnRedo.disabled = !state.redoStack.length;
+}
+
 /* --------------------------------------------------------------- очистка */
 
 function clearAll() {
+  pushUndo();
   state.cover.title = ''; state.cover.body = '';
   state.cover.img = null; state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0;
   state.cardsText = '';
@@ -3165,6 +3282,7 @@ function autoSplitText() {
   if (!paragraphs.length) { say('Сначала добавь текст, который нужно разбить'); return; }
 
   if (!confirm('Текущая раскладка на карточки будет заменена — метки //N расставятся заново, по одному абзацу на карточку. Продолжить?')) return;
+  pushUndo();
 
   state.cardsText = paragraphs
     .map((lines, i) => '//' + (i + 1) + '\n' + lines.join('\n'))
@@ -3180,10 +3298,12 @@ function wireEvents() {
   wirePreviewsBulkDrop();
 
   el.coverTitle.addEventListener('input', () => {
+    pushUndo();   // снимок хватает СТАРЫЙ title — пишем его до переприсвоения ниже
     state.cover.title = el.coverTitle.value;
     scheduleRender(); saveProject();
   });
   el.coverBody.addEventListener('input', () => {
+    pushUndo();
     state.cover.body = el.coverBody.value;
     scheduleRender(); saveProject();
   });
@@ -3285,6 +3405,8 @@ function wireEvents() {
   document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));
   document.getElementById('btnItalic').addEventListener('click', () => toggleMarkup('_'));
 
+  document.getElementById('btnUndo').addEventListener('click', undo);
+  document.getElementById('btnRedo').addEventListener('click', redo);
   document.getElementById('btnExportMain').addEventListener('click', exportAll);
   document.getElementById('btnExportBar').addEventListener('click', exportAll);
   document.getElementById('btnCopy').addEventListener('click', copyCurrent);
@@ -3375,10 +3497,13 @@ function wireEvents() {
     const sel = window.getSelection();
     const hasTextSelection = Boolean(sel && sel.toString().length);
     if (e.key === 'c' && !inField && !hasTextSelection) { e.preventDefault(); copyCurrent(); }
-    // форматирование — только для поля карточек, чтобы не мешать полям обложки
+    // отмена/повтор и форматирование — не в полях обложки, там свой нативный undo
+    // (текстовые input не трогаем программной перезаписью, поэтому он и так работает)
     if (inField) return;
     if (e.key === 'b' || e.key === 'и') { e.preventDefault(); toggleMarkup('**'); }
     if (e.key === 'i' || e.key === 'ш') { e.preventDefault(); toggleMarkup('_'); }
+    if (e.key === 'z' || e.key === 'я') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+    if ((e.key === 'y' || e.key === 'н') && !e.shiftKey) { e.preventDefault(); redo(); }
   });
 
   window.addEventListener('dragover', e => e.preventDefault());
@@ -3451,6 +3576,7 @@ async function start() {
   buildPreviews();
   syncTypographyControls();
   setupPanelResize();
+  syncUndoButtons();
 
   try {
     await Promise.all([

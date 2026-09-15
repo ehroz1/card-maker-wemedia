@@ -45,6 +45,8 @@ const state = {
   focusZone: 'editor', // где пользователь работал: editor | coverTitle | coverBody | preview
   lastCaret: null,     // последнее положение курсора в поле карточек
   fontsReady: false,
+  undoStack: [],       // снимки состояния для отмены (см. pushUndo/undo/redo)
+  redoStack: [],
 };
 
 const el = {};
@@ -346,6 +348,7 @@ function duplicateCard(index) {
   if (index < 0 || index >= state.cards.length) return;
   const { blocks, maxNum, markerRe } = splitCardBlocks(state.cardsText);
   if (index >= blocks.length) return;
+  pushUndo();
 
   const copy = blocks[index].slice();
   const markerMatch = copy[0].trim().match(markerRe);
@@ -379,6 +382,7 @@ function reorderCard(sourceIndex, targetIndex) {
   if (sourceIndex === targetIndex) return;
   const { blocks } = splitCardBlocks(state.cardsText);
   if (sourceIndex < 0 || sourceIndex >= blocks.length || targetIndex < 0 || targetIndex >= blocks.length) return;
+  pushUndo();
 
   const [moved] = blocks.splice(sourceIndex, 1);
   blocks.splice(targetIndex, 0, moved);
@@ -622,9 +626,10 @@ function fileToImage(file) {
   });
 }
 
-async function setPhoto(index, file) {
+async function setPhoto(index, file, { skipUndo = false } = {}) {
   try {
     const img = await fileToImage(file);
+    if (!skipUndo) pushUndo();
     if (index === 0) {
       state.cover.img = img;
       state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
@@ -648,6 +653,7 @@ async function setPhoto(index, file) {
 function removePhoto(index) {
   const card = allCards()[index];
   if (!card || !card.img) return;
+  pushUndo();
   if (index === 0) {
     state.cover.img = null;
     state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
@@ -669,13 +675,15 @@ function removePhoto(index) {
  * нескольких файлов — вместо того чтобы цеплять их к карточкам по одному.
  */
 async function distributePhotos(images, startIndex) {
+  if (!images.length) return 0;
+  pushUndo();   // одна пачка — один шаг отмены, а не по одному на файл
   const list = allCards();
   let idx = Math.max(1, startIndex);
   let used = 0;
   for (const file of images) {
     while (idx < list.length && !list[idx].usePhoto) idx++;
     if (idx >= list.length) break;
-    await setPhoto(idx, file);
+    await setPhoto(idx, file, { skipUndo: true });
     idx++;
     used++;
   }
@@ -911,6 +919,7 @@ async function pasteFromClipboard() {
 
 /* Вставляет разметку в место курсора, не полагаясь на команды браузера. */
 function insertMarkup(markup) {
+  pushUndo();
   const range = getCaretOffset(el.cardsText) || state.lastCaret || { start: 0, end: 0 };
   const chars = markupToChars(state.cardsText);
   const added = markupToChars(markup);
@@ -929,6 +938,7 @@ function insertText(text) {
 }
 
 function onEditorInput() {
+  pushUndo();   // снимок хватает СТАРЫЙ state.cardsText — пишем его до переприсвоения ниже
   state.cardsText = editorValue();
   syncCards(); buildPreviews(); saveProject();
   syncTypographyControls();
@@ -1070,6 +1080,7 @@ function setSelectValue(select, value) {
 
 /* Записывает изменённую настройку туда, где стоит выделение. */
 function applyStylePatch(patch) {
+  pushUndo();
   const target = activeStyleTarget();
   if (target.kind === 'cover') {
     Object.assign(state.coverStyles[target.field], patch);
@@ -1123,6 +1134,7 @@ function restyleSelection(patch) {
 
   const picked = chars.slice(start, end).filter(c => c.ch !== '\n');
   if (!picked.length) return false;
+  pushUndo();
 
   if (patch.bold === 'toggle') {
     const value = !picked.every(c => c.bold);
@@ -1199,6 +1211,13 @@ const HELP = [
   ['Как устроено окно',
    'Слева — превью всех карточек, посередине — текст, справа — типографика, ' +
    'трансформация картинки и экспорт. Углы панелей можно тянуть, меняя их размер.'],
+  ['Отмена действий',
+   'Две стрелки в начале нижней панели (или ⌘Z / ⌘⇧Z) — отменить/повторить. ' +
+   'Работает для текста, фото, дублирования и перестановки карточек, ' +
+   'автоматической разбивки, очистки рабочей зоны — для всего, что меняет ' +
+   'содержимое проекта. Быстрые правки подряд схлопываются в один шаг. Поля ' +
+   'заголовка и подзаголовка обложки не затрагивает — там штатный ' +
+   'браузерный undo.'],
   ['Обложка',
    'Заголовок и подзаголовок набираются в двух верхних полях. Кегль каждого ' +
    'меняется кнопками − и + справа от поля. Начертание, трекинг и выключку ' +
@@ -1437,9 +1456,101 @@ function pickAsset(kind) {
   el.assetPicker.click();
 }
 
+/* --------------------------------------------------------------- отмена */
+
+/*
+ * Снимок состояния для отмены/повтора: всё, что реально меняют действия
+ * пользователя — текст, стили, фото. Фото — просто ссылки на уже
+ * загруженные Image, копирование снимка их не декодирует заново и почти
+ * ничего не стоит по памяти; cardStylesById/coverStyles/transformsById —
+ * маленькие плоские объекты, их клонируем по-настоящему, чтобы более
+ * позднее изменение не задело сохранённый снимок задним числом.
+ */
+function snapshotState() {
+  return {
+    coverTitle: state.cover.title, coverBody: state.cover.body,
+    coverImg: state.cover.img,
+    coverZoom: state.cover.zoom, coverPanX: state.cover.panX,
+    coverPanY: state.cover.panY, coverRotate: state.cover.rotate,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    cardsText: state.cardsText,
+    coverStyles: JSON.parse(JSON.stringify(state.coverStyles)),
+    cardStylesById: JSON.parse(JSON.stringify(state.cardStylesById)),
+    transformsById: JSON.parse(JSON.stringify(state.transformsById)),
+    photosById: Object.assign({}, state.photosById),
+    current: state.current,
+  };
+}
+
+function restoreSnapshot(snap) {
+  state.cover.title = snap.coverTitle; state.cover.body = snap.coverBody;
+  state.cover.img = snap.coverImg;
+  state.cover.zoom = snap.coverZoom; state.cover.panX = snap.coverPanX;
+  state.cover.panY = snap.coverPanY; state.cover.rotate = snap.coverRotate;
+  state.coverTitleSize = snap.coverTitleSize; state.coverBodySize = snap.coverBodySize;
+  state.cardsText = snap.cardsText;
+  state.coverStyles = snap.coverStyles;
+  state.cardStylesById = snap.cardStylesById;
+  state.transformsById = snap.transformsById;
+  state.photosById = snap.photosById;
+
+  fillControls();
+  syncCards();
+  buildPreviews();
+  syncTypographyControls();
+  saveProject();
+  selectCard(Math.min(snap.current, state.cards.length), { keepZone: true });
+}
+
+const UNDO_LIMIT = 100;
+const UNDO_COALESCE_MS = 600;   // быстрые повторы одного и того же действия — один шаг отмены
+let lastUndoPushAt = 0;
+
+/*
+ * Запоминает состояние ДО изменения — вызывается первой строкой в каждой
+ * функции, которая меняет текст/стили/фото. Быстрые повторы (печать,
+ * перетаскивание ползунка, серия кликов подряд) схлопываются в один шаг —
+ * иначе на каждую букву была бы отдельная отмена, как и в обычных редакторах.
+ */
+function pushUndo() {
+  const now = Date.now();
+  if (now - lastUndoPushAt < UNDO_COALESCE_MS) return;
+  lastUndoPushAt = now;
+  state.undoStack.push(snapshotState());
+  if (state.undoStack.length > UNDO_LIMIT) state.undoStack.shift();
+  state.redoStack.length = 0;
+  syncUndoButtons();
+}
+
+function undo() {
+  if (!state.undoStack.length) { say('Нечего отменять'); return; }
+  state.redoStack.push(snapshotState());
+  restoreSnapshot(state.undoStack.pop());
+  lastUndoPushAt = 0;   // следующее действие должно снова создать свой шаг
+  syncUndoButtons();
+  say('Отменено');
+}
+
+function redo() {
+  if (!state.redoStack.length) { say('Нечего повторить'); return; }
+  state.undoStack.push(snapshotState());
+  restoreSnapshot(state.redoStack.pop());
+  lastUndoPushAt = 0;
+  syncUndoButtons();
+  say('Повторено');
+}
+
+function syncUndoButtons() {
+  const btnUndo = document.getElementById('btnUndo');
+  const btnRedo = document.getElementById('btnRedo');
+  if (btnUndo) btnUndo.disabled = !state.undoStack.length;
+  if (btnRedo) btnRedo.disabled = !state.redoStack.length;
+}
+
 /* --------------------------------------------------------------- очистка */
 
 function clearAll() {
+  pushUndo();
   state.cover.title = ''; state.cover.body = '';
   state.cover.img = null; state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0;
   state.cardsText = '';
@@ -1496,6 +1607,7 @@ function autoSplitText() {
   if (!paragraphs.length) { say('Сначала добавь текст, который нужно разбить'); return; }
 
   if (!confirm('Текущая раскладка на карточки будет заменена — метки //N расставятся заново, по одному абзацу на карточку. Продолжить?')) return;
+  pushUndo();
 
   state.cardsText = paragraphs
     .map((lines, i) => '//' + (i + 1) + '\n' + lines.join('\n'))
@@ -1511,10 +1623,12 @@ function wireEvents() {
   wirePreviewsBulkDrop();
 
   el.coverTitle.addEventListener('input', () => {
+    pushUndo();   // снимок хватает СТАРЫЙ title — пишем его до переприсвоения ниже
     state.cover.title = el.coverTitle.value;
     scheduleRender(); saveProject();
   });
   el.coverBody.addEventListener('input', () => {
+    pushUndo();
     state.cover.body = el.coverBody.value;
     scheduleRender(); saveProject();
   });
@@ -1616,6 +1730,8 @@ function wireEvents() {
   document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));
   document.getElementById('btnItalic').addEventListener('click', () => toggleMarkup('_'));
 
+  document.getElementById('btnUndo').addEventListener('click', undo);
+  document.getElementById('btnRedo').addEventListener('click', redo);
   document.getElementById('btnExportMain').addEventListener('click', exportAll);
   document.getElementById('btnExportBar').addEventListener('click', exportAll);
   document.getElementById('btnCopy').addEventListener('click', copyCurrent);
@@ -1706,10 +1822,13 @@ function wireEvents() {
     const sel = window.getSelection();
     const hasTextSelection = Boolean(sel && sel.toString().length);
     if (e.key === 'c' && !inField && !hasTextSelection) { e.preventDefault(); copyCurrent(); }
-    // форматирование — только для поля карточек, чтобы не мешать полям обложки
+    // отмена/повтор и форматирование — не в полях обложки, там свой нативный undo
+    // (текстовые input не трогаем программной перезаписью, поэтому он и так работает)
     if (inField) return;
     if (e.key === 'b' || e.key === 'и') { e.preventDefault(); toggleMarkup('**'); }
     if (e.key === 'i' || e.key === 'ш') { e.preventDefault(); toggleMarkup('_'); }
+    if (e.key === 'z' || e.key === 'я') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
+    if ((e.key === 'y' || e.key === 'н') && !e.shiftKey) { e.preventDefault(); redo(); }
   });
 
   window.addEventListener('dragover', e => e.preventDefault());
@@ -1782,6 +1901,7 @@ async function start() {
   buildPreviews();
   syncTypographyControls();
   setupPanelResize();
+  syncUndoButtons();
 
   try {
     await Promise.all([
