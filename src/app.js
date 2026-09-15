@@ -1,7 +1,8 @@
 /* Card Maker — интерфейс. Всё считается локально в браузере. */
 
 const STORE_TEMPLATES = 'cardmaker.templates.v2';
-const STORE_PROJECT = 'cardmaker.project.v2';
+// v3: cardStyles хранится по стабильному ключу карточки (см. cardKeys), а не по позиции
+const STORE_PROJECT = 'cardmaker.project.v3';
 const PREVIEW_CSS_WIDTH = 225;
 const PREVIEW_SCALE = 2;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
@@ -24,11 +25,16 @@ const state = {
   coverTitleSize: 60,
   coverBodySize: 45,
   cardsText: '',
-  photos: [],          // фото карточек по порядку: photos[0] — первая карточка
+  // фото/стиль/трансформация карточек хранятся по стабильному ключу карточки
+  // (см. cardKeys), а не по позиции — иначе вставка или удаление карточки
+  // выше по тексту молча переносит фото и настройки на другую карточку
+  photosById: {},
+  cardStylesById: {},   // стиль каждой карточки: то, что пользователь поменял руками
+  transformsById: {},   // zoom/panX/panY/rotate каждой карточки с фото
+  cardIds: [],          // ключи карточек state.cards, посчитанные последним syncCards()
   cards: [],           // разобранные карточки (пересобираются из текста)
   format: DEFAULT_FORMAT,
   exportFormat: 'png',
-  cardStyles: [],       // стиль каждой карточки: то, что пользователь поменял руками
   coverStyles: { title: {}, body: {} },   // заголовок и подзаголовок обложки — отдельно
   templateName: null,
   templates: {},
@@ -109,7 +115,7 @@ function saveProject() {
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
     exportFormat: state.exportFormat,
-    cardStyles: state.cardStyles, coverStyles: state.coverStyles,
+    cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
   try { localStorage.setItem(STORE_PROJECT, JSON.stringify(data)); } catch { /* не критично */ }
@@ -126,7 +132,7 @@ function loadProject() {
   state.cardsText = d.cardsText || '';
   if (FORMATS[d.format]) state.format = d.format;
   if (d.exportFormat) state.exportFormat = d.exportFormat;
-  if (Array.isArray(d.cardStyles)) state.cardStyles = d.cardStyles;
+  if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
   if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
   return true;
@@ -193,24 +199,55 @@ function currentGradient() {
 
 /* ------------------------------------------------------------- карточки */
 
+/*
+ * Стабильный ключ карточки: метка ("//1", "//2-", …) плюс номер её
+ * повторения среди одинаковых меток. Метка не зависит от позиции карточки
+ * в массиве, поэтому по ней можно узнавать «ту же» карточку после того,
+ * как текст выше поменялся и все индексы сдвинулись.
+ */
+function cardKeys(parsed) {
+  const seen = {};
+  return parsed.map(p => {
+    const marker = p.marker || '';
+    const n = seen[marker] || 0;
+    seen[marker] = n + 1;
+    return marker + '#' + n;
+  });
+}
+
 /* Пересобирает список карточек из текста, сохраняя уже загруженные фото. */
 function syncCards() {
   const parsed = parseCards(state.cardsText);
-  state.cards = parsed.map((p, i) => ({
-    kind: 'card',
-    lines: p.lines,
-    usePhoto: p.usePhoto,
-    img: state.photos[i] || null,
-    zoom: (state.cards[i] && state.cards[i].zoom) || 1,
-    panX: (state.cards[i] && state.cards[i].panX) || 0,
-    panY: (state.cards[i] && state.cards[i].panY) || 0,
-    rotate: (state.cards[i] && state.cards[i].rotate) || 0,
-    style: state.cardStyles[i] || {},
-  }));
+  const keys = cardKeys(parsed);
+  state.cardIds = keys;
+  state.cards = parsed.map((p, i) => {
+    const key = keys[i];
+    const t = state.transformsById[key] || {};
+    return {
+      kind: 'card',
+      lines: p.lines,
+      usePhoto: p.usePhoto,
+      img: state.photosById[key] || null,
+      zoom: t.zoom || 1,
+      panX: t.panX || 0,
+      panY: t.panY || 0,
+      rotate: t.rotate || 0,
+      style: state.cardStylesById[key] || {},
+    };
+  });
   state.cover.style = { size: state.coverBodySize, headingSize: state.coverTitleSize };
   state.cover.titleStyle = Object.assign({}, state.coverStyles.title);
   state.cover.bodyStyle = Object.assign({}, state.coverStyles.body);
   if (state.current > state.cards.length) state.current = 0;
+}
+
+/* Записывает текущий zoom/pan/rotate карточки под её позицией в storage по ключу. */
+function commitTransform(index) {
+  if (index <= 0) return;              // у обложки трансформация хранится прямо в state.cover
+  const key = state.cardIds[index - 1];
+  const card = state.cards[index - 1];
+  if (!key || !card) return;
+  state.transformsById[key] = { zoom: card.zoom, panX: card.panX, panY: card.panY, rotate: card.rotate };
 }
 
 function allCards() {
@@ -271,6 +308,7 @@ function attachFrameEvents(frame, index) {
     const move = ev => {
       card.panX = ox - (ev.clientX - sx) * ratio;
       card.panY = oy - (ev.clientY - sy) * ratio;
+      commitTransform(index);
       syncTransformControls();
       scheduleRender();
     };
@@ -303,6 +341,7 @@ function attachFrameEvents(frame, index) {
     const [a, b] = e.touches;
     const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
     card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchStart.zoom * (dist / pinchStart.dist)));
+    commitTransform(index);
     syncTransformControls();
     scheduleRender();
   }, { passive: false });
@@ -315,6 +354,7 @@ function attachFrameEvents(frame, index) {
     e.preventDefault();
     selectCard(index);
     card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, card.zoom + (e.deltaY > 0 ? -0.05 : 0.05)));
+    commitTransform(index);
     syncTransformControls();
     scheduleRender();
   }, { passive: false });
@@ -380,7 +420,10 @@ async function setPhoto(index, file) {
       state.cover.img = img;
       state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
     } else {
-      state.photos[index - 1] = img;
+      const key = state.cardIds[index - 1];
+      if (key === undefined) return;
+      state.photosById[key] = img;
+      delete state.transformsById[key];   // новое фото — трансформация сбрасывается
       const card = state.cards[index - 1];
       if (card) { card.img = img; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0; }
     }
@@ -426,6 +469,7 @@ function renderAll() {
     try {
       const fixed = renderCard(ctx, card, [W, H], assets, gradient);
       card.panX = fixed.panX; card.panY = fixed.panY;
+      commitTransform(i);
     } catch (err) {
       console.error('не удалось отрисовать карточку', i, err);
       say('Карточка ' + (i + 1) + ': ошибка отрисовки');
@@ -459,10 +503,16 @@ async function exportAll() {
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
-  let n = 0;
+  let n = 0, failed = 0;
 
   for (let i = 0; i < list.length; i++) {
-    const blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    let blob = null;
+    try {
+      blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    } catch (err) {
+      console.error('не удалось отрисовать карточку для экспорта', i, err);
+    }
+    if (!blob) { failed++; continue; }
     const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -474,7 +524,7 @@ async function exportAll() {
     n++;
     await new Promise(r => setTimeout(r, 350));
   }
-  say('Скачано: ' + n);
+  say(failed ? `Скачано: ${n}, не получилось: ${failed}` : 'Скачано: ' + n);
 }
 
 async function copyCurrent() {
@@ -561,7 +611,8 @@ function selectedCardIndexes() {
     const lineStart = offset;
     const lineEnd = offset + line.length;
     if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) cardIndex++;
-    else if (cardIndex < 0 && line.trim()) cardIndex = 0;
+    // текст до первой метки //  parseCards() отбрасывает при сборке карточек,
+    // поэтому курсор в нём не должен считаться попаданием в «карточку 1»
     // строка попадает в выделение (или в неё стоит каретка)
     const inside = from <= lineEnd && to >= lineStart;
     if (inside && cardIndex >= 0 && !touched.includes(cardIndex)) touched.push(cardIndex);
@@ -620,7 +671,7 @@ function activeStyleTarget() {
 function effectiveStyle(cardIndex) {
   const card = state.cards[cardIndex];
   if (!card) return null;
-  return Object.assign(defaultTypography(card), state.cardStyles[cardIndex] || {});
+  return Object.assign(defaultTypography(card), card.style || {});
 }
 
 /* Показывает в панели типографики настройки активной карточки. */
@@ -679,7 +730,9 @@ function applyStylePatch(patch) {
     }
   } else {
     for (const i of target.indexes) {
-      state.cardStyles[i] = Object.assign({}, state.cardStyles[i] || {}, patch);
+      const key = state.cardIds[i];
+      if (!key) continue;
+      state.cardStylesById[key] = Object.assign({}, state.cardStylesById[key] || {}, patch);
     }
   }
   syncCards(); scheduleRender(); saveProject();
@@ -757,7 +810,12 @@ async function sendToTelegram() {
   const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
   const files = [];
   for (let i = 0; i < list.length; i++) {
-    const blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    let blob = null;
+    try {
+      blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+    } catch (err) {
+      console.error('не удалось отрисовать карточку для отправки', i, err);
+    }
     if (!blob) continue;
     const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
     files.push(new File([blob], name, { type: mime }));
@@ -940,6 +998,10 @@ function templatesMenu(anchor) {
     action: async () => {
       const name = prompt('Название проекта:');
       if (!name) return;
+      if (state.templates[name]) {
+        say('Проект «' + name + '» уже есть — выбери его в списке или введи другое имя');
+        return;
+      }
       state.templates[name] = { logo: null, logoDark: null, gradient: null };
       state.templateName = name;
       saveTemplates();
@@ -993,9 +1055,11 @@ function clearAll() {
   state.cover.title = ''; state.cover.body = '';
   state.cover.img = null; state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0;
   state.cardsText = '';
-  state.photos = [];
+  state.photosById = {};
   state.cards = [];
-  state.cardStyles = [];
+  state.cardIds = [];
+  state.cardStylesById = {};
+  state.transformsById = {};
   state.coverStyles = { title: {}, body: {} };
   state.focusZone = 'editor';
   state.lastCaret = null;
@@ -1097,6 +1161,7 @@ function wireEvents() {
     card.panX = Number(el.rngOffsetX.value);
     card.panY = Number(el.rngOffsetY.value);
     card.rotate = Number(el.rngRotate.value);
+    commitTransform(state.current);
     paintTransformOutputs();
     scheduleRender();
   };
@@ -1184,7 +1249,11 @@ function wireEvents() {
     const inField = document.activeElement &&
       (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
     if (e.key === 's') { e.preventDefault(); exportAll(); }
-    if (e.key === 'c' && !inField) { e.preventDefault(); copyCurrent(); }
+    // если что-то выделено текстом на странице (например, в окне «Инструкция») —
+    // ⌘C должен копировать этот текст, а не карточку
+    const sel = window.getSelection();
+    const hasTextSelection = Boolean(sel && sel.toString().length);
+    if (e.key === 'c' && !inField && !hasTextSelection) { e.preventDefault(); copyCurrent(); }
     // форматирование — только для поля карточек, чтобы не мешать полям обложки
     if (inField) return;
     if (e.key === 'b' || e.key === 'и') { e.preventDefault(); toggleMarkup('**'); }

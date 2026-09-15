@@ -158,7 +158,8 @@ def main() -> int:
 
     bundled = "const BUNDLED_BRAND = {\n"
     for key, value in brand.items():
-        bundled += f"  {key}: {('\"' + value + '\"') if value else 'null'},\n"
+        js_value = ('"' + value + '"') if value else "null"
+        bundled += f"  {key}: {js_value},\n"
     bundled += "};\n"
 
     # ---------- сборка

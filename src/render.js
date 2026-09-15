@@ -100,13 +100,16 @@ function parseCards(text) {
     if (marker) {
       // "//1" — шаблон выбирается сам: без фото плоский, с фото — с фотографией.
       // "//1-" запрещает фото, "//1+" то же, что и без знака.
-      current = { usePhoto: marker[2] !== '-', lines: [] };
+      // marker хранит саму метку — по ней в app.js собирается стабильный
+      // ключ карточки, чтобы фото и настройки не переезжали на другую
+      // карточку при вставке/удалении карточек выше по тексту.
+      current = { usePhoto: marker[2] !== '-', lines: [], marker: rawLine.trim() };
       cards.push(current);
       continue;
     }
     if (!current) {
       if (!rawLine.trim()) continue;     // текст до первой метки игнорируем
-      current = { usePhoto: true, lines: [] };
+      current = { usePhoto: true, lines: [], marker: '' };
       cards.push(current);
     }
     current.lines.push(rawLine);
