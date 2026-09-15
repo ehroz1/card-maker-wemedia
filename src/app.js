@@ -35,6 +35,7 @@ const state = {
   cards: [],           // разобранные карточки (пересобираются из текста)
   format: DEFAULT_FORMAT,
   exportFormat: 'png',
+  exportScale: 1,       // множитель разрешения при экспорте (1×/2×/3×)
   coverStyles: { title: {}, body: {} },   // заголовок и подзаголовок обложки — отдельно
   templateName: null,
   templates: {},
@@ -49,7 +50,7 @@ const el = {};
 ['previews', 'coverTitle', 'coverBody', 'coverTitleSize', 'coverBodySize', 'cardsText',
  'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
  'status', 'menu', 'filePicker', 'assetPicker',
- 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope',
+ 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale',
  'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut']
   .forEach(id => { el[id] = document.getElementById(id); });
 
@@ -114,7 +115,7 @@ function saveProject() {
     coverTitle: state.cover.title, coverBody: state.cover.body,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat,
+    exportFormat: state.exportFormat, exportScale: state.exportScale,
     cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
@@ -130,6 +131,7 @@ function applyProjectData(d) {
   state.cardsText = d.cardsText || '';
   if (FORMATS[d.format]) state.format = d.format;
   if (d.exportFormat) state.exportFormat = d.exportFormat;
+  if (d.exportScale && [1, 2, 3].includes(Number(d.exportScale))) state.exportScale = Number(d.exportScale);
   if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
   if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
@@ -149,7 +151,7 @@ function exportProjectFile() {
     coverTitle: state.cover.title, coverBody: state.cover.body,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat,
+    exportFormat: state.exportFormat, exportScale: state.exportScale,
     cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
@@ -401,6 +403,24 @@ function buildPreviews() {
   scheduleRender();
 }
 
+/*
+ * Пачка фото, брошенная не точно на карточку (например, в промежуток между
+ * превью), раскладывается по карточкам карусели по порядку начиная с первой.
+ * Одиночное фото на конкретную карточку по-прежнему обрабатывает сама
+ * карточка (attachFrameEvents) и останавливает всплытие — сюда долетают
+ * только пачки и промахи мимо рамок.
+ */
+function wirePreviewsBulkDrop() {
+  el.previews.addEventListener('dragover', e => e.preventDefault());
+  el.previews.addEventListener('drop', async e => {
+    e.preventDefault();
+    const images = [...(e.dataTransfer.files || [])].filter(f => f.type.startsWith('image/'));
+    if (images.length <= 1) return;
+    const n = await distributePhotos(images, 1);
+    say('Разложено фото по карточкам: ' + n);
+  });
+}
+
 function attachFrameEvents(frame, index) {
   // работает с мышью, пальцем и пером
   frame.addEventListener('pointerdown', e => {
@@ -473,10 +493,17 @@ function attachFrameEvents(frame, index) {
   frame.addEventListener('dragleave', () => frame.classList.remove('dropping'));
   frame.addEventListener('drop', async e => {
     e.preventDefault();
+    e.stopPropagation();   // иначе сработает ещё и общий обработчик пачки на #previews
     frame.classList.remove('dropping');
     selectCard(index);
-    const file = [...(e.dataTransfer.files || [])].find(f => f.type.startsWith('image/'));
-    if (file) await setPhoto(index, file);
+    const images = [...(e.dataTransfer.files || [])].filter(f => f.type.startsWith('image/'));
+    if (!images.length) return;
+    if (images.length === 1) {
+      await setPhoto(index, images[0]);
+    } else {
+      const n = await distributePhotos(images, index);
+      say('Разложено фото по карточкам: ' + n);
+    }
   });
 }
 
@@ -545,6 +572,26 @@ async function setPhoto(index, file) {
   }
 }
 
+/*
+ * Раскладывает пачку фото по карточкам карусели по порядку, начиная с
+ * startIndex (позиция в allCards(), обложка пропускается), пропуская
+ * карточки без фото (//N-). Используется при перетаскивании/выборе сразу
+ * нескольких файлов — вместо того чтобы цеплять их к карточкам по одному.
+ */
+async function distributePhotos(images, startIndex) {
+  const list = allCards();
+  let idx = Math.max(1, startIndex);
+  let used = 0;
+  for (const file of images) {
+    while (idx < list.length && !list[idx].usePhoto) idx++;
+    if (idx >= list.length) break;
+    await setPhoto(idx, file);
+    idx++;
+    used++;
+  }
+  return used;
+}
+
 /* ---------------------------------------------------------------- рендер */
 
 let renderTimer = null;
@@ -588,11 +635,12 @@ function renderAll() {
   });
 }
 
-function renderFull(card) {
+function renderFull(card, scale = state.exportScale) {
   const [W, H] = FORMATS[state.format];
   const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
+  canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
   const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
   renderCard(ctx, card, [W, H], currentAssets(), currentGradient());
   return canvas;
 }
@@ -1188,6 +1236,8 @@ function clearAll() {
 /* --------------------------------------------------------------- события */
 
 function wireEvents() {
+  wirePreviewsBulkDrop();
+
   el.coverTitle.addEventListener('input', () => {
     state.cover.title = el.coverTitle.value;
     scheduleRender(); saveProject();
@@ -1267,6 +1317,10 @@ function wireEvents() {
     state.exportFormat = el.exportFormat.value;
     saveProject();
   });
+  el.exportScale.addEventListener('change', () => {
+    state.exportScale = Number(el.exportScale.value) || 1;
+    saveProject();
+  });
 
   const applyTransform = () => {
     const card = allCards()[state.current];
@@ -1316,8 +1370,11 @@ function wireEvents() {
   });
 
   el.filePicker.addEventListener('change', async () => {
-    const file = el.filePicker.files[0];
-    if (file) await setPhoto(state.current, file);
+    const files = [...el.filePicker.files];
+    if (!files.length) return;
+    if (files.length === 1) { await setPhoto(state.current, files[0]); return; }
+    const n = await distributePhotos(files, Math.max(1, state.current));
+    say('Разложено фото по карточкам: ' + n);
   });
 
   el.assetPicker.addEventListener('change', () => {
@@ -1432,6 +1489,7 @@ function fillControls() {
   el.coverBodySize.textContent = String(state.coverBodySize);
   setEditorValue(state.cardsText, false);
   el.exportFormat.value = state.exportFormat;
+  el.exportScale.value = String(state.exportScale);
   syncTransformControls();
 }
 

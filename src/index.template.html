@@ -149,6 +149,16 @@ __CSS__
           </select>
           <span class="caret" data-icon="caret"></span>
         </label>
+        <label class="control" title="Разрешение экспорта — умножает 1080×… на 2 или 3">
+          <select id="exportScale" aria-label="Разрешение экспорта">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+          </select>
+          <span class="caret" data-icon="caret"></span>
+        </label>
+      </div>
+      <div class="control-row">
         <button class="btn-green" id="btnExportMain" type="button">Export</button>
       </div>
 
@@ -191,7 +201,7 @@ __CSS__
 
 <div class="menu" id="menu" role="menu"></div>
 
-<input type="file" id="filePicker" accept="image/*" hidden>
+<input type="file" id="filePicker" accept="image/*" multiple hidden>
 <input type="file" id="assetPicker" accept="image/png,image/webp,image/jpeg,image/svg+xml" hidden>
 
 <script>
