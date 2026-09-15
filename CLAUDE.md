@@ -11,10 +11,18 @@ as data URIs into one self-contained `index.html` so it can be dropped on GitHub
 Pages or opened from disk. UI text, code comments, and commit-facing docs in this
 repo are in Russian — match that when editing README.md or user-facing strings.
 
+The build also emits two small companion files for offline/installable use as a
+PWA: `manifest.webmanifest` and `service-worker.js`, written next to `index.html`.
+Unlike `index.html` these are *not* single-file-embeddable — a service worker can't
+be registered from a `blob:`/`data:` URL by spec, so this is the one place the app
+isn't fully self-contained in one file. All three must be deployed together and
+kept at the same path (GitHub Pages "root" deploy already does this).
+
 ## Commands
 
-Rebuild `index.html` from `src/` + `brand/` after any source edit — the app that
-actually runs is the generated `index.html`, not the files in `src/`:
+Rebuild `index.html` (plus `manifest.webmanifest`/`service-worker.js`) from `src/` +
+`brand/` after any source edit — the app that actually runs is the generated
+`index.html`, not the files in `src/`:
 
 ```bash
 python3 build.py
@@ -50,7 +58,12 @@ writes `index.html`. It fails loudly if any token is left unsubstituted. Font
 files from `brand/fonts/` are subset and converted to woff2 (via fontTools, if
 installed) and inlined as `@font-face` data URIs; logos from `brand/` are
 inlined as data URIs; icons from `brand/icons/*.svg` become a JS `ICONS` object
-keyed by filename stem. **Always edit `src/`, `brand/`, or `build.py` — never
+keyed by filename stem. It then does the same substitution for
+`src/manifest.template.json` (the one token, `__PWA_ICON__`, becomes a data URI
+of `brand/pwa-icon.svg`) and writes it as `manifest.webmanifest`, and copies
+`src/service-worker.js` to the output root verbatim (no templating — it's
+generic app-shell caching, nothing brand-specific to substitute). **Always edit
+`src/`, `brand/`, or `build.py` — never
 edit `index.html` directly**, since it's a generated artifact that gets
 overwritten on the next build.
 

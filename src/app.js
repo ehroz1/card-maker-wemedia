@@ -1767,6 +1767,12 @@ async function start() {
   } catch { /* если шрифт не подхватился, рисуем системным */ }
   state.fontsReady = true;
   renderAll();
+
+  // офлайн-доступ: не критично, если недоступно (file://, старый браузер) —
+  // страница и так работает, просто без кеша на случай отсутствия сети
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('service-worker.js').catch(() => { /* не критично */ });
+  }
 }
 
 start();
