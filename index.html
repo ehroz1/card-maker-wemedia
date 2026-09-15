@@ -1836,9 +1836,33 @@ function loadTemplates() {
   try { state.templates = JSON.parse(localStorage.getItem(STORE_TEMPLATES) || '{}'); }
   catch { state.templates = {}; }
   if (!Object.keys(state.templates).length) {
-    state.templates = { 'Мой проект': { logo: null, logoDark: null, gradient: null } };
+    state.templates = { 'we-pr-обычный-пост': { logo: null, logoDark: null, gradient: null,
+      coverTitleSize: 60, coverBodySize: 45, coverStyles: { title: {}, body: {} } } };
   }
   state.templateName = Object.keys(state.templates)[0];
+}
+
+/* Переносит текущий кегль/стиль обложки в активный шаблон, чтобы при
+ * переключении на другой шаблон (см. templatesMenu) он восстанавливался. */
+function syncTemplateDesign() {
+  const tpl = state.templates[state.templateName];
+  if (!tpl) return;
+  tpl.coverTitleSize = state.coverTitleSize;
+  tpl.coverBodySize = state.coverBodySize;
+  tpl.coverStyles = JSON.parse(JSON.stringify(state.coverStyles));
+  saveTemplates();
+}
+
+/* Достаёт кегль/стиль обложки из шаблона в state (при переключении шаблона). */
+function applyTemplateDesign(name) {
+  const tpl = state.templates[name] || {};
+  state.coverTitleSize = tpl.coverTitleSize || 60;
+  state.coverBodySize = tpl.coverBodySize || 45;
+  state.coverStyles = tpl.coverStyles
+    ? JSON.parse(JSON.stringify(tpl.coverStyles)) : { title: {}, body: {} };
+  el.coverTitleSize.textContent = String(state.coverTitleSize);
+  el.coverBodySize.textContent = String(state.coverBodySize);
+  syncCards();
 }
 
 function saveTemplates() {
@@ -2947,6 +2971,7 @@ function applyStylePatch(patch) {
         el.coverBodySize.textContent = String(patch.size);
       }
     }
+    syncTemplateDesign();
   } else {
     for (const i of target.indexes) {
       const key = state.cardIds[i];
@@ -3247,31 +3272,53 @@ function appendGradientSliders() {
 let pendingAssetKind = null;
 
 function templatesMenu(anchor) {
-  const items = [{ groupLabel: 'Проект' }];
+  const items = [{ groupLabel: 'Шаблон' }];
   for (const name of Object.keys(state.templates)) {
     items.push({
       label: name, checked: name === state.templateName,
       action: async () => {
         state.templateName = name;
+        applyTemplateDesign(name);
         if (!state.assets[name]) await prepareAssets(name);
         scheduleRender(); saveProject();
       },
     });
   }
   items.push({ divider: true }, {
-    label: 'Новый проект…',
+    label: 'Новый шаблон…',
     action: async () => {
-      const name = prompt('Название проекта:');
+      const name = prompt('Название шаблона:');
       if (!name) return;
       if (state.templates[name]) {
-        say('Проект «' + name + '» уже есть — выбери его в списке или введи другое имя');
+        say('Шаблон «' + name + '» уже есть — выбери его в списке или введи другое имя');
         return;
       }
-      state.templates[name] = { logo: null, logoDark: null, gradient: null };
+      // новый шаблон стартует с текущего дизайна (кегль/стиль обложки) —
+      // его правят дальше через степперы и панель типографики
+      state.templates[name] = { logo: null, logoDark: null, gradient: null,
+        coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+        coverStyles: JSON.parse(JSON.stringify(state.coverStyles)) };
       state.templateName = name;
       saveTemplates();
       await prepareAssets(name);
       scheduleRender();
+    },
+  }, {
+    label: 'Переименовать шаблон…',
+    action: () => {
+      const oldName = state.templateName;
+      const name = prompt('Новое название шаблона:', oldName);
+      if (!name || name === oldName) return;
+      if (state.templates[name]) {
+        say('Шаблон «' + name + '» уже есть — выбери другое имя');
+        return;
+      }
+      state.templates[name] = state.templates[oldName];
+      delete state.templates[oldName];
+      state.templateName = name;
+      if (state.assets[oldName]) { state.assets[name] = state.assets[oldName]; delete state.assets[oldName]; }
+      saveTemplates();
+      say('Шаблон переименован в «' + name + '»');
     },
   });
   items.push({ divider: true }, { groupLabel: 'Файлы шаблона' },
@@ -3284,7 +3331,7 @@ function templatesMenu(anchor) {
       label: 'Вернуть логотипы по умолчанию',
       action: async () => {
         state.templates[state.templateName] =
-          { logo: null, logoDark: null, gradient: tpl.gradient || null };
+          Object.assign({}, tpl, { logo: null, logoDark: null });
         saveTemplates();
         await prepareAssets(state.templateName);
         scheduleRender();
@@ -3294,11 +3341,12 @@ function templatesMenu(anchor) {
   }
   if (Object.keys(state.templates).length > 1) {
     items.push({
-      label: 'Удалить этот проект',
+      label: 'Удалить этот шаблон',
       action: async () => {
         delete state.templates[state.templateName];
         delete state.assets[state.templateName];
         state.templateName = Object.keys(state.templates)[0];
+        applyTemplateDesign(state.templateName);
         saveTemplates();
         if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
         scheduleRender();
@@ -3509,6 +3557,7 @@ function wireEvents() {
         const key = isTitle ? 'coverTitleSize' : 'coverBodySize';
         state[key] = Math.max(8, Math.min(300, state[key] + delta));
         (isTitle ? el.coverTitleSize : el.coverBodySize).textContent = String(state[key]);
+        syncTemplateDesign();
         syncCards(); scheduleRender(); saveProject();
       });
     });

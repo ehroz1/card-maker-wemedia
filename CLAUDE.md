@@ -108,6 +108,17 @@ by the build into one `<script>` tag, sharing globals):
   handlers; `saveProject`/`loadProject` persist text/settings (not photos) to
   `localStorage` under `cardmaker.project.v3` / `cardmaker.templates.v2` —
   bump the version suffix if the stored shape changes incompatibly.
+  `state.templates` (named, switchable via the **Шаблоны проекта** menu,
+  `templatesMenu`) originally only held brand assets (`logo`/`logoDark`/
+  `gradient`) but now also carries each template's own cover title/subtitle
+  kegl and `coverStyles` (`coverTitleSize`/`coverBodySize`/`coverStyles` per
+  entry) — `syncTemplateDesign()` writes the active document's current cover
+  sizing into the active template on every change, `applyTemplateDesign()`
+  reads it back out when switching templates. Keep both in sync when adding
+  more per-template design fields — a new field needs to flow through both
+  functions plus the "Новый шаблон…" seeding and "Вернуть логотипы по
+  умолчанию" merge (which must preserve fields it isn't touching, not
+  overwrite the whole template object).
 
 The carousel text markup (`//1` new card with photo fallback to white template,
 `//2-` photo-less card, `**bold**`, `_italic_`, blank line = spacer line, a
