@@ -446,6 +446,20 @@ function buildPreviews() {
     warn.title = 'Текст не помещается на карточку — уменьши кегль/межстрочный интервал или перенеси часть текста на другую карточку';
     frame.appendChild(warn);
 
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'remove-photo';
+    removeBtn.textContent = '✕';
+    removeBtn.title = 'Убрать фото с этой карточки';
+    // pointerdown у рамки запускает панорамирование фото — гасим всплытие
+    // именно здесь, иначе клик по кнопке ещё и подхватится как начало сдвига кадра
+    removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    removeBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      removePhoto(i);
+    });
+    frame.appendChild(removeBtn);
+
     attachFrameEvents(frame, i);
     item.appendChild(frame);
     el.previews.appendChild(item);
@@ -630,6 +644,24 @@ async function setPhoto(index, file) {
   }
 }
 
+/* Убирает фото с карточки — на случай, если передумали. Текст не трогает. */
+function removePhoto(index) {
+  const card = allCards()[index];
+  if (!card || !card.img) return;
+  if (index === 0) {
+    state.cover.img = null;
+    state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+  } else {
+    const key = state.cardIds[index - 1];
+    if (key === undefined) return;
+    delete state.photosById[key];
+    delete state.transformsById[key];
+    card.img = null; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+  }
+  scheduleRender();
+  say('Фото убрано');
+}
+
 /*
  * Раскладывает пачку фото по карточкам карусели по порядку, начиная с
  * startIndex (позиция в allCards(), обложка пропускается), пропуская
@@ -673,9 +705,11 @@ function renderAll() {
     const canvas = frame.querySelector('canvas');
     const empty = frame.querySelector('.empty');
 
-    const hasContent = (card.usePhoto && card.img) ||
+    const hasPhoto = Boolean(card.usePhoto && card.img);
+    const hasContent = hasPhoto ||
       (card.kind === 'cover' ? (card.title || card.body) : card.lines.some(l => l.trim()));
     empty.style.display = hasContent ? 'none' : 'grid';
+    frame.classList.toggle('has-photo', hasPhoto);
 
     canvas.width = Math.round(W * scale);
     canvas.height = Math.round(H * scale);
@@ -1200,7 +1234,9 @@ const HELP = [
    'используй первую кнопку внизу. Колесо мыши на превью — масштаб, ' +
    'перетаскивание — сдвиг кадра. Точные значения — в блоке «Трансформация». ' +
    'Если перетащить или выбрать сразу несколько фото, они разложатся по ' +
-   'карточкам по порядку, пропуская карточки без фото (//N-).'],
+   'карточкам по порядку, пропуская карточки без фото (//N-). Крестик ' +
+   'в углу превью (появляется, если на карточке есть фото) убирает фото ' +
+   'обратно — текст при этом не трогается.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
