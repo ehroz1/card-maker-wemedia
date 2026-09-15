@@ -47,6 +47,8 @@ const state = {
   fontsReady: false,
   undoStack: [],       // снимки состояния для отмены (см. pushUndo/undo/redo)
   redoStack: [],
+  selectedKeys: new Set(),   // множественный выбор карточек — ключи (см. cardKeys), не позиции
+  selectAnchor: null,        // с какой карточки считать диапазон при Shift+клике (индекс в state.cards)
 };
 
 const el = {};
@@ -307,6 +309,11 @@ function syncCards() {
   state.cover.titleStyle = Object.assign({}, state.coverStyles.title);
   state.cover.bodyStyle = Object.assign({}, state.coverStyles.body);
   if (state.current > state.cards.length) state.current = 0;
+  // выбор хранится по ключу — но если карточка с таким ключом пропала
+  // из текста (удалили/переименовали метку), больше нет смысла её держать
+  for (const key of state.selectedKeys) {
+    if (!state.cardIds.includes(key)) state.selectedKeys.delete(key);
+  }
 }
 
 /* Записывает текущий zoom/pan/rotate карточки под её позицией в storage по ключу. */
@@ -417,8 +424,10 @@ function buildPreviews() {
     label.textContent = cardLabel(i);
     item.appendChild(label);
 
+    const isMultiSelected = i > 0 && state.selectedKeys.has(state.cardIds[i - 1]);
     const frame = document.createElement('div');
-    frame.className = 'frame' + (i === state.current ? ' selected' : '');
+    frame.className = 'frame' + (i === state.current ? ' selected' : '') +
+      (isMultiSelected ? ' multi-selected' : '');
     frame.dataset.index = String(i);
     frame.appendChild(document.createElement('canvas'));
 
@@ -464,6 +473,22 @@ function buildPreviews() {
     });
     frame.appendChild(removeBtn);
 
+    if (i > 0) {
+      // чекбокс множественного выбора — виден всегда, не только когда отмечен,
+      // чтобы было понятно, что так вообще можно (и работало тапом на телефоне,
+      // где нет ни ⌘, ни Shift)
+      const selectBadge = document.createElement('button');
+      selectBadge.type = 'button';
+      selectBadge.className = 'select-badge';
+      selectBadge.title = 'Выбрать карточку (для массового удаления/экспорта)';
+      selectBadge.addEventListener('pointerdown', e => e.stopPropagation());
+      selectBadge.addEventListener('click', e => {
+        e.stopPropagation();
+        toggleCardSelection(i, 'toggle');
+      });
+      frame.appendChild(selectBadge);
+    }
+
     attachFrameEvents(frame, i);
     item.appendChild(frame);
     el.previews.appendChild(item);
@@ -493,6 +518,12 @@ function wirePreviewsBulkDrop() {
 function attachFrameEvents(frame, index) {
   // работает с мышью, пальцем и пером
   frame.addEventListener('pointerdown', e => {
+    // Ctrl/Cmd/Shift+клик — это множественный выбор, а не начало панорамирования фото
+    if (index > 0 && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+      toggleCardSelection(index, e.shiftKey ? 'range' : 'toggle');
+      return;
+    }
+    if (state.selectedKeys.size) clearSelection();   // обычный клик снимает множественный выбор
     selectCard(index);
     const card = allCards()[index];
     if (!card || !card.img || !card.usePhoto) return;
@@ -590,6 +621,80 @@ function selectCard(index, options = {}) {
     f.classList.toggle('selected', Number(f.dataset.index) === index);
   });
   syncTransformControls();
+}
+
+/*
+ * Отмечает/снимает карточку в множественном выборе (для массового удаления —
+ * см. deleteSelectedCards). Выбор хранится по ключу карточки (cardKeys),
+ * а не по позиции, — вставка карточки выше по тексту не должна незаметно
+ * подменить выбор на другую карточку, та же логика, что у фото и стилей.
+ *
+ * mode: 'toggle' — переключить эту карточку; 'range' — выбрать диапазон
+ * от последней тронутой (state.selectAnchor) до этой (Shift+клик).
+ */
+function toggleCardSelection(index, mode) {
+  if (index <= 0) return;   // обложка не участвует в массовых действиях
+  const i = index - 1;
+  const key = state.cardIds[i];
+  if (!key) return;
+
+  if (mode === 'range' && state.selectAnchor !== null) {
+    const [a, b] = [state.selectAnchor, i].sort((x, y) => x - y);
+    for (let k = a; k <= b; k++) {
+      const k2 = state.cardIds[k];
+      if (k2) state.selectedKeys.add(k2);
+    }
+  } else {
+    if (state.selectedKeys.has(key)) state.selectedKeys.delete(key);
+    else state.selectedKeys.add(key);
+    state.selectAnchor = i;
+  }
+  selectCard(index, { keepZone: true });
+  syncSelectionUI();
+}
+
+function clearSelection() {
+  if (!state.selectedKeys.size) return;
+  state.selectedKeys.clear();
+  state.selectAnchor = null;
+  syncSelectionUI();
+}
+
+function syncSelectionUI() {
+  [...el.previews.querySelectorAll('.frame')].forEach(f => {
+    const i = Number(f.dataset.index);
+    const key = i > 0 ? state.cardIds[i - 1] : null;
+    f.classList.toggle('multi-selected', Boolean(key && state.selectedKeys.has(key)));
+  });
+  const btnDelete = document.getElementById('btnDeleteSelected');
+  if (btnDelete) btnDelete.disabled = !state.selectedKeys.size;
+}
+
+/*
+ * Удаляет выбранные карточки целиком — текст, фото, стиль. Единственный
+ * способ убрать карточку сейчас; до этого приходилось вручную вырезать
+ * её блок из текста. Отменяется через ⌘Z, как и всё остальное.
+ */
+function deleteSelectedCards() {
+  if (!state.selectedKeys.size) return;
+  const n = state.selectedKeys.size;
+  if (!confirm(`Удалить выбранные карточки (${n})? Можно будет вернуть через ⌘Z.`)) return;
+
+  pushUndo();
+  const { blocks } = splitCardBlocks(state.cardsText);
+  const keep = blocks.filter((_, i) => !state.selectedKeys.has(state.cardIds[i]));
+  for (const key of state.selectedKeys) {
+    delete state.photosById[key];
+    delete state.cardStylesById[key];
+    delete state.transformsById[key];
+  }
+  state.selectedKeys.clear();
+  state.selectAnchor = null;
+  state.cardsText = keep.map(b => b.join('\n')).join('\n');
+  setEditorValue(state.cardsText, false);
+  syncCards(); buildPreviews(); saveProject();
+  syncSelectionUI();
+  say('Удалено карточек: ' + n);
 }
 
 /* Ползунки трансформации показывают значения выбранной карточки. */
@@ -1264,6 +1369,13 @@ const HELP = [
    'Значок «⠿» рядом с названием карточки (кроме обложки) — потяни за него ' +
    'и перетащи на другую карточку, чтобы поменять их местами. Текст, фото ' +
    'и настройки переезжают вместе с карточкой.'],
+  ['Множественный выбор',
+   'Кружок в углу превью — чекбокс: отмечает карточку для массового действия. ' +
+   'То же самое — Ctrl/⌘+клик по самой карточке (добавить/убрать) или ' +
+   'Shift+клик (выбрать диапазон). Пока есть отмеченные, кнопка с корзиной ' +
+   'в нижней панели удаляет их все разом — единственный способ убрать ' +
+   'карточку целиком (до этого только руками вырезать её текст). Обычный ' +
+   'клик по карточке без модификаторов снимает выбор, Escape — тоже.'],
   ['Типографика',
    'Настройки применяются туда, где стоит курсор: к выбранной карточке или ' +
    'к полю обложки. Область действия написана зелёным рядом со словом ' +
@@ -1494,11 +1606,18 @@ function restoreSnapshot(snap) {
   state.transformsById = snap.transformsById;
   state.photosById = snap.photosById;
 
+  // множественный выбор в снимок не попадает — это состояние интерфейса,
+  // а не содержимое проекта; после отмены/повтора надёжнее снять его,
+  // чем оставлять указывать на карточки, которых, может, уже нет
+  state.selectedKeys.clear();
+  state.selectAnchor = null;
+
   fillControls();
   syncCards();
   buildPreviews();
   syncTypographyControls();
   saveProject();
+  syncSelectionUI();
   selectCard(Math.min(snap.current, state.cards.length), { keepZone: true });
 }
 
@@ -1739,6 +1858,7 @@ function wireEvents() {
     if (state.current <= 0) { say('Выбери карточку карусели, чтобы её продублировать'); return; }
     duplicateCard(state.current - 1);
   });
+  document.getElementById('btnDeleteSelected').addEventListener('click', deleteSelectedCards);
   document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
@@ -1837,7 +1957,7 @@ function wireEvents() {
     if (!el.menu.contains(e.target) && !e.target.closest('.bar button')) closeMenu();
   });
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeMenu(); closeHelp(); }
+    if (e.key === 'Escape') { closeMenu(); closeHelp(); clearSelection(); }
   });
   window.addEventListener('resize', () => closeMenu());
 }
@@ -1902,6 +2022,7 @@ async function start() {
   syncTypographyControls();
   setupPanelResize();
   syncUndoButtons();
+  syncSelectionUI();
 
   try {
     await Promise.all([
