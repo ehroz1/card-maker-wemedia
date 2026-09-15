@@ -12,6 +12,7 @@ const DEFAULT_FORMAT = '1080×1350';
 
 const REF_HEIGHT = 1350;      // высота, под которую сняты отступы
 const EDGE_GUARD = 24;        // страховка от переполнения текстом
+const LOGO_GAP = 20;          // отступ между низом логотипа и первой строкой текста
 const WRAP_TOLERANCE = 1.005; // допуск переноса (разница метрик макета и браузера)
 const ASCENT_RATIO = 0.94;    // метрика Raleway: верх строки от базовой линии
 const HEADING_SCALE = 1.5;    // строка целиком жирная крупнее обычной в полтора раза
@@ -561,6 +562,7 @@ function renderCard(ctx, card, size, assets, gradient) {
   let overflow = false;
   if (total > 0) {
     let y;
+    const logoBottom = L.logo.top + L.logo.h + LOGO_GAP;
     if (L.anchor === 'bottom') {
       y = H - marginBottom - total + bottomInk;
       // если полоса упёрлась в минимум, текст начинается сразу под ней
@@ -569,9 +571,15 @@ function renderCard(ctx, card, size, assets, gradient) {
         if (y < floor) { y = floor; overflow = true; }
       }
       if (y < EDGE_GUARD) overflow = true;
+      // фото на всю карточку (обложка) логотип не сдвигает — только предупреждаем
+      if (!hasPhoto || L.photoMode !== 'band') { if (y < logoBottom) overflow = true; }
     } else if (L.anchor === 'center') {
       y = (H - total) / 2;
+      // центрирование без учёта логотипа могло надвинуть текст прямо на него —
+      // прижимаем блок под логотип, а не даём тексту залезать под него
+      if (y < logoBottom) { y = logoBottom; overflow = true; }
       if (y < EDGE_GUARD) overflow = true;
+      if (y + total > H - EDGE_GUARD) overflow = true;
     } else {
       y = bandH + gapPhoto - topInk;
       const limit = H - EDGE_GUARD - total;

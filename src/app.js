@@ -1283,7 +1283,10 @@ function autoSplitText() {
   const L = LAYOUTS.cardPlain;
   const [W, H] = FORMATS[state.format];
   const maxWidth = W - L.marginX * 2;
-  const budget = H - L.marginBottom * 2;
+  // столько текста реально помещается без наложения на логотип и нижний край —
+  // та же граница, что renderCard() использует для центрированных карточек
+  const logoBottom = L.logo.top + L.logo.h + LOGO_GAP;
+  const budget = H - EDGE_GUARD - logoBottom;
   const style = defaultTypography({ kind: 'card' });
   const ctx = document.createElement('canvas').getContext('2d');
   // между абзацами внутри карточки — пустая строка-отступ, как в обычной разметке
