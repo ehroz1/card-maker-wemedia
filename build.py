@@ -158,7 +158,8 @@ def main() -> int:
 
     bundled = "const BUNDLED_BRAND = {\n"
     for key, value in brand.items():
-        bundled += f"  {key}: {('\"' + value + '\"') if value else 'null'},\n"
+        js_value = ('"' + value + '"') if value else "null"
+        bundled += f"  {key}: {js_value},\n"
     bundled += "};\n"
 
     # ---------- сборка
@@ -179,6 +180,20 @@ def main() -> int:
 
     OUT.write_text(html, encoding="utf-8")
     print(f"\nготово: {OUT.name}  ({OUT.stat().st_size / 1024:.0f} КБ)")
+
+    # ---------- PWA: манифест (иконка внутри как data URI) и сервис-воркер рядом
+    icon_svg = BRAND / "pwa-icon.svg"
+    manifest_path = HERE / "manifest.webmanifest"
+    sw_path = HERE / "service-worker.js"
+    if icon_svg.exists():
+        manifest = (SRC / "manifest.template.json").read_text(encoding="utf-8")
+        manifest = manifest.replace("__PWA_ICON__", data_url(icon_svg))
+        manifest_path.write_text(manifest, encoding="utf-8")
+        sw_path.write_text((SRC / "service-worker.js").read_text(encoding="utf-8"), encoding="utf-8")
+        print(f"готово: {manifest_path.name}, {sw_path.name}")
+    else:
+        print(f"! нет {icon_svg} — manifest.webmanifest/service-worker.js не пересобраны")
+
     print("залей в репозиторий и включи GitHub Pages — см. README.md")
     return 0
 

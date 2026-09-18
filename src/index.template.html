@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Card Maker</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0dac67">
 <style>
 __FONT_FACES__
 __CSS__
@@ -42,7 +44,11 @@ __CSS__
       </div>
     </div>
 
-    <p class="section-label spaced">Карточки</p>
+    <p class="section-label spaced">
+      Карточки
+      <button type="button" class="btn-ghost" id="btnAutoSplit"
+        title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
+    </p>
     <div class="editor-area">
       <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="false"
            role="textbox" aria-multiline="true" aria-label="Текст карточек"
@@ -135,6 +141,18 @@ __CSS__
         <div class="range-head"><span>Поворот</span><output id="rotateOut">0°</output></div>
         <input type="range" id="rngRotate" min="-180" max="180" step="1" value="0" aria-label="Поворот картинки">
       </div>
+      <label class="control-check">
+        <input type="checkbox" id="chkGrayscale">
+        <span>Чёрно-белое</span>
+      </label>
+      <div class="range-row">
+        <div class="range-head"><span>Яркость</span><output id="brightnessOut">100%</output></div>
+        <input type="range" id="rngBrightness" min="50" max="150" step="1" value="100" aria-label="Яркость картинки">
+      </div>
+      <div class="range-row">
+        <div class="range-head"><span>Контраст</span><output id="contrastOut">100%</output></div>
+        <input type="range" id="rngContrast" min="50" max="150" step="1" value="100" aria-label="Контраст картинки">
+      </div>
 
       <p class="section-label spaced">Экспорт</p>
       <div class="control-row">
@@ -145,6 +163,20 @@ __CSS__
           </select>
           <span class="caret" data-icon="caret"></span>
         </label>
+        <label class="control" title="Разрешение экспорта — умножает 1080×… на 2 или 3">
+          <select id="exportScale" aria-label="Разрешение экспорта">
+            <option value="1">1×</option>
+            <option value="2">2×</option>
+            <option value="3">3×</option>
+          </select>
+          <span class="caret" data-icon="caret"></span>
+        </label>
+      </div>
+      <label class="control-check">
+        <input type="checkbox" id="exportZip">
+        <span>Одним ZIP-архивом</span>
+      </label>
+      <div class="control-row">
         <button class="btn-green" id="btnExportMain" type="button">Export</button>
       </div>
 
@@ -156,8 +188,13 @@ __CSS__
 
 <!-- --------------------------------------------------- нижняя панель -->
 <div class="bar">
+  <button id="btnUndo" type="button" title="Отменить (⌘Z)" data-icon="undo"></button>
+  <button id="btnRedo" type="button" title="Повторить (⌘⇧Z)" data-icon="redo"></button>
+  <span class="sep"></span>
   <button id="btnSelect" type="button" title="Инструмент выделения" data-icon="select"></button>
   <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
+  <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
+  <button id="btnDeleteSelected" type="button" title="Удалить отмеченные карточки" data-icon="delete-selected" disabled></button>
   <button id="btnPaste" type="button" title="Вставить фото из буфера обмена" data-icon="paste"></button>
   <button id="btnBold" type="button" title="Жирный (⌘B)" data-icon="bold"></button>
   <button id="btnItalic" type="button" title="Курсив (⌘I)" data-icon="italic"></button>
@@ -186,7 +223,7 @@ __CSS__
 
 <div class="menu" id="menu" role="menu"></div>
 
-<input type="file" id="filePicker" accept="image/*" hidden>
+<input type="file" id="filePicker" accept="image/*" multiple hidden>
 <input type="file" id="assetPicker" accept="image/png,image/webp,image/jpeg,image/svg+xml" hidden>
 
 <script>

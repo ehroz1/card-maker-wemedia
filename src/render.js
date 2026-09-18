@@ -12,6 +12,7 @@ const DEFAULT_FORMAT = '1080×1350';
 
 const REF_HEIGHT = 1350;      // высота, под которую сняты отступы
 const EDGE_GUARD = 24;        // страховка от переполнения текстом
+const LOGO_GAP = 20;          // отступ между низом логотипа и первой строкой текста
 const WRAP_TOLERANCE = 1.005; // допуск переноса (разница метрик макета и браузера)
 const ASCENT_RATIO = 0.94;    // метрика Raleway: верх строки от базовой линии
 const HEADING_SCALE = 1.5;    // строка целиком жирная крупнее обычной в полтора раза
@@ -100,13 +101,16 @@ function parseCards(text) {
     if (marker) {
       // "//1" — шаблон выбирается сам: без фото плоский, с фото — с фотографией.
       // "//1-" запрещает фото, "//1+" то же, что и без знака.
-      current = { usePhoto: marker[2] !== '-', lines: [] };
+      // marker хранит саму метку — по ней в app.js собирается стабильный
+      // ключ карточки, чтобы фото и настройки не переезжали на другую
+      // карточку при вставке/удалении карточек выше по тексту.
+      current = { usePhoto: marker[2] !== '-', lines: [], marker: rawLine.trim() };
       cards.push(current);
       continue;
     }
     if (!current) {
       if (!rawLine.trim()) continue;     // текст до первой метки игнорируем
-      current = { usePhoto: true, lines: [] };
+      current = { usePhoto: true, lines: [], marker: '' };
       cards.push(current);
     }
     current.lines.push(rawLine);
@@ -409,6 +413,20 @@ function coverCrop(img, targetW, targetH, zoom, panX, panY) {
 }
 
 /*
+ * Строка для ctx.filter из настроек ч/б, яркости и контраста карточки.
+ * 100% яркости/контраста — нейтральное значение, ничего не меняет.
+ */
+function photoFilterCss(card) {
+  const parts = [];
+  if (card.grayscale) parts.push('grayscale(100%)');
+  const brightness = card.brightness || 100;
+  if (brightness !== 100) parts.push(`brightness(${brightness}%)`);
+  const contrast = card.contrast || 100;
+  if (contrast !== 100) parts.push(`contrast(${contrast}%)`);
+  return parts.length ? parts.join(' ') : 'none';
+}
+
+/*
  * Рисует фотографию в область (0,0,W,H) с масштабом, сдвигом и поворотом.
  * При повороте область докрывается с запасом, чтобы по углам не было пустот.
  */
@@ -423,6 +441,9 @@ function drawPhoto(ctx, img, W, H, card) {
   const c = coverCrop(img, needW, needH, card.zoom, card.panX, card.panY);
 
   ctx.save();
+  // старые браузеры без ctx.filter просто рисуют фото без ч/б/яркости/контраста —
+  // деградирует мягко, как letterSpacing чуть выше по файлу
+  if ('filter' in ctx) ctx.filter = photoFilterCss(card);
   ctx.translate(W / 2, H / 2);
   if (angle) ctx.rotate(angle);
   ctx.drawImage(img, c.dx - needW / 2, c.dy - needH / 2, c.drawW, c.drawH);
@@ -553,21 +574,33 @@ function renderCard(ctx, card, size, assets, gradient) {
                                          : (assets.logo || assets.logoDark), L);
 
   // --- текст
+  // overflow: текста больше, чем помещается в отведённое место без наложения
+  // на фото/логотип или верхний край карточки — сигнал для UI подсветить карточку
+  let overflow = false;
   if (total > 0) {
     let y;
+    const logoBottom = L.logo.top + L.logo.h + LOGO_GAP;
     if (L.anchor === 'bottom') {
       y = H - marginBottom - total + bottomInk;
       // если полоса упёрлась в минимум, текст начинается сразу под ней
       if (hasPhoto && L.photoMode === 'band') {
         const floor = bandH + gapPhoto - topInk;
-        if (y < floor) y = floor;
+        if (y < floor) { y = floor; overflow = true; }
       }
+      if (y < EDGE_GUARD) overflow = true;
+      // фото на всю карточку (обложка) логотип не сдвигает — только предупреждаем
+      if (!hasPhoto || L.photoMode !== 'band') { if (y < logoBottom) overflow = true; }
     } else if (L.anchor === 'center') {
       y = (H - total) / 2;
+      // центрирование без учёта логотипа могло надвинуть текст прямо на него —
+      // прижимаем блок под логотип, а не даём тексту залезать под него
+      if (y < logoBottom) { y = logoBottom; overflow = true; }
+      if (y < EDGE_GUARD) overflow = true;
+      if (y + total > H - EDGE_GUARD) overflow = true;
     } else {
       y = bandH + gapPhoto - topInk;
       const limit = H - EDGE_GUARD - total;
-      if (y > limit) y = Math.max(bandH + 20, limit);
+      if (y > limit) { y = Math.max(bandH + 20, limit); overflow = true; }
     }
 
     const color = card.kind === 'cover' ? L.titleColor : L.textColor;
@@ -581,5 +614,5 @@ function renderCard(ctx, card, size, assets, gradient) {
 
   if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
   ctx.restore();
-  return { panX, panY };
+  return { panX, panY, overflow };
 }
