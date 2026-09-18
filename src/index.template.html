@@ -221,9 +221,23 @@ __CSS__
   </div>
 </div>
 
+<div class="modal" id="videoTrimModal" role="dialog" aria-modal="true" aria-label="Обрезка видео перед экспортом" hidden>
+  <div class="modal-card">
+    <div class="modal-body">
+      <h2>Обрезка видео</h2>
+      <p>Для каждого видео на карточке укажи начало и конец нужного фрагмента, в секундах.</p>
+      <div id="videoTrimBody"></div>
+      <div class="video-trim-actions">
+        <button type="button" class="btn-ghost" id="videoTrimCancel">Отмена</button>
+        <button type="button" class="btn-green" id="videoTrimConfirm">Экспортировать</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="menu" id="menu" role="menu"></div>
 
-<input type="file" id="filePicker" accept="image/*" multiple hidden>
+<input type="file" id="filePicker" accept="image/*,video/*" multiple hidden>
 <input type="file" id="assetPicker" accept="image/png,image/webp,image/jpeg,image/svg+xml" hidden>
 
 <script>
