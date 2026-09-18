@@ -156,6 +156,30 @@ the current frame, not the full clip. Videos are never explicitly
 disposing photo `Image` objects (both can still be reachable from the undo
 stack).
 
+**Dark theme** covers the tool's own UI chrome only — never the exported cards,
+which always render in fixed brand colors regardless of app theme (`render.js`
+has no theme awareness at all, by design). All chrome colors are CSS custom
+properties on `:root` in `styles.css`; dark values live in two blocks that must
+be kept in sync: `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {...} }`
+(follows the OS setting until the user picks explicitly) and `:root[data-theme="dark"]`
+(the explicit override, set by `toggleTheme()` in app.js and persisted to
+`localStorage` under `cardmaker.theme.v1`). A tiny inline `<script>` in
+`index.template.html`'s `<head>` — before `<style>`, deliberately not templated
+through `__APP_JS__` — applies a saved explicit choice before first paint to
+avoid a flash of the wrong theme; it must stay a plain inline script for that
+ordering to work. Icons (`brand/icons/*.svg`) are inserted into the DOM as live
+markup (`node.innerHTML = svg` in `paintIcons`), not `<img>`/data-URIs, so they
+can reference the same CSS variables directly in their own `fill`/`stroke`
+attributes (`var(--icon-bg)`/`var(--icon-fg)` for the neutral bar-button icons,
+`var(--control)` for the small inline glyphs like the select caret) and repaint
+automatically with the theme — a new icon should follow this convention rather
+than hardcoding `white`/`#414141`. Two color roles are intentionally *not*
+theme-reactive and must stay off the `--white`/`--ink` etc. variables: brand
+accents (`--green`, the amber `--warn`) and `--on-accent` (always `#fff`, for
+text/glyphs drawn on top of a permanently-colored surface like `.btn-green` or
+the multi-select checkmark badge) — using the wrong one is the easiest way to
+end up with invisible text after a theme edit.
+
 Compatibility constraints baked into the code (see README.md "Совместимость"):
 letter-spacing falls back to manual per-character drawing when
 `ctx.letterSpacing` is unsupported; missing `ResizeObserver`/clipboard API must

@@ -6,6 +6,13 @@
 <title>Card Maker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0dac67">
+<script>
+// применяем сохранённый выбор темы до отрисовки CSS, чтобы не мелькала не та тема
+try {
+  var t = localStorage.getItem('cardmaker.theme.v1');
+  if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+} catch (e) { /* приватный режим — тема просто пойдёт по системной настройке */ }
+</script>
 <style>
 __FONT_FACES__
 __CSS__
@@ -207,6 +214,7 @@ __CSS__
   <button id="btnTelegram" type="button" title="Отправить карточки в Telegram" data-icon="telegram"></button>
   <span class="sep"></span>
   <button id="btnHelp" type="button" title="Инструкция" data-icon="help"></button>
+  <button id="btnTheme" type="button" title="Тёмная тема" data-icon="theme"></button>
 </div>
 
 <footer class="page-footer">

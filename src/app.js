@@ -3,6 +3,7 @@
 const STORE_TEMPLATES = 'cardmaker.templates.v2';
 // v3: cardStyles хранится по стабильному ключу карточки (см. cardKeys), а не по позиции
 const STORE_PROJECT = 'cardmaker.project.v3';
+const STORE_THEME = 'cardmaker.theme.v1';
 const PREVIEW_CSS_WIDTH = 225;
 const PREVIEW_SCALE = 2;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
@@ -101,6 +102,38 @@ function paintIcons(root = document) {
       node.dataset.painted = '1';
     }
   });
+}
+
+/* ----------------------------------------------------------------- тема */
+/*
+ * Тёмная тема — переключаемая, с запоминанием выбора. По умолчанию (пока
+ * пользователь ничего не выбрал) следует системной настройке через CSS
+ * (@media prefers-color-scheme) — атрибут data-theme на <html> тогда не
+ * ставится вовсе. Явный выбор сохраняется в localStorage и перекрывает
+ * системную тему через :root[data-theme="dark"]/[data-theme="light"] в
+ * styles.css. Применение сохранённого выбора при самом первом рисовании
+ * страницы (до этого скрипта) — см. небольшой инлайновый скрипт в <head>
+ * index.template.html, чтобы не было вспышки не той темы при загрузке.
+ */
+function systemPrefersDark() {
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function isDarkActive() {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === 'dark' : systemPrefersDark();
+}
+function syncThemeButton() {
+  const btn = document.getElementById('btnTheme');
+  if (!btn) return;
+  const dark = isDarkActive();
+  btn.title = dark ? 'Светлая тема' : 'Тёмная тема';
+  btn.classList.toggle('active', dark);
+}
+function toggleTheme() {
+  const next = isDarkActive() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(STORE_THEME, next); } catch { /* приватный режим — просто не запомнится */ }
+  syncThemeButton();
 }
 
 /* ------------------------------------------------------------- хранилище */
@@ -1712,6 +1745,12 @@ const HELP = [
    'из файла»: весь текст и настройки (без фото) можно перенести на другой ' +
    'компьютер или сохранить как резервную копию. ' +
    'Иконка с карандашом — размер карточки и настройка затемнения на обложке.'],
+  ['Тёмная тема',
+   'Последняя кнопка в нижней панели переключает оформление интерфейса ' +
+   'между светлым и тёмным — на сами карточки это никак не влияет, ' +
+   'они выглядят одинаково в любой теме. Пока не нажмёшь кнопку, тема ' +
+   'подстраивается под системную настройку устройства и меняется вместе ' +
+   'с ней; после нажатия выбор запоминается и не зависит от системной темы.'],
 ];
 
 function openHelp() {
@@ -2206,6 +2245,7 @@ function wireEvents() {
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
   document.getElementById('btnHelp').addEventListener('click', openHelp);
+  document.getElementById('btnTheme').addEventListener('click', toggleTheme);
   document.getElementById('helpClose').addEventListener('click', closeHelp);
   document.getElementById('helpModal').addEventListener('click', e => {
     if (e.target.id === 'helpModal') closeHelp();
@@ -2355,6 +2395,15 @@ function fillControls() {
 
 async function start() {
   paintIcons();
+  syncThemeButton();
+  // пока пользователь не выбрал тему вручную (нет data-theme), кнопка должна
+  // отражать живое изменение системной темы, не только клик
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemThemeChange = () => { if (!document.documentElement.dataset.theme) syncThemeButton(); };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemThemeChange);
+    else if (mq.addListener) mq.addListener(onSystemThemeChange);   // старый Safari
+  }
   loadTemplates();
   if (!loadProject()) state.cardsText = SAMPLE;
   await prepareAssets(state.templateName);
