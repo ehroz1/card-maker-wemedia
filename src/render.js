@@ -400,10 +400,15 @@ function drawLogo(ctx, logo, L) {
 }
 
 function coverCrop(img, targetW, targetH, zoom, panX, panY) {
-  const baseScale = Math.max(targetW / img.width, targetH / img.height);
+  // у HTMLVideoElement .width/.height — это HTML-атрибуты (обычно 0), а
+  // настоящий размер кадра — videoWidth/videoHeight; у HTMLImageElement их
+  // просто нет, тогда используем .width/.height как раньше
+  const iw = img.videoWidth || img.width;
+  const ih = img.videoHeight || img.height;
+  const baseScale = Math.max(targetW / iw, targetH / ih);
   const scale = baseScale * Math.max(zoom, 1);
-  const drawW = img.width * scale;
-  const drawH = img.height * scale;
+  const drawW = iw * scale;
+  const drawH = ih * scale;
   const maxLeft = Math.max(0, drawW - targetW);
   const maxTop = Math.max(0, drawH - targetH);
   const left = Math.min(Math.max(maxLeft / 2 + panX, 0), maxLeft);

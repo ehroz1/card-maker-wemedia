@@ -6,6 +6,13 @@
 <title>Card Maker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0dac67">
+<script>
+// применяем сохранённый выбор темы до отрисовки CSS, чтобы не мелькала не та тема
+try {
+  var t = localStorage.getItem('cardmaker.theme.v1');
+  if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t;
+} catch (e) { /* приватный режим — тема просто пойдёт по системной настройке */ }
+</script>
 <style>
 __FONT_FACES__
 __CSS__
@@ -191,7 +198,7 @@ __CSS__
   <button id="btnUndo" type="button" title="Отменить (⌘Z)" data-icon="undo"></button>
   <button id="btnRedo" type="button" title="Повторить (⌘⇧Z)" data-icon="redo"></button>
   <span class="sep"></span>
-  <button id="btnSelect" type="button" title="Инструмент выделения" data-icon="select"></button>
+  <button id="btnImport" type="button" title="Импорт фото или видео" data-icon="import"></button>
   <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
   <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
   <button id="btnDeleteSelected" type="button" title="Удалить отмеченные карточки" data-icon="delete-selected" disabled></button>
@@ -207,6 +214,7 @@ __CSS__
   <button id="btnTelegram" type="button" title="Отправить карточки в Telegram" data-icon="telegram"></button>
   <span class="sep"></span>
   <button id="btnHelp" type="button" title="Инструкция" data-icon="help"></button>
+  <button id="btnTheme" type="button" title="Тёмная тема" data-icon="theme"></button>
 </div>
 
 <footer class="page-footer">
@@ -221,9 +229,23 @@ __CSS__
   </div>
 </div>
 
+<div class="modal" id="videoTrimModal" role="dialog" aria-modal="true" aria-label="Обрезка видео перед экспортом" hidden>
+  <div class="modal-card">
+    <div class="modal-body">
+      <h2>Обрезка видео</h2>
+      <p>Для каждого видео на карточке укажи начало и конец нужного фрагмента, в секундах.</p>
+      <div id="videoTrimBody"></div>
+      <div class="video-trim-actions">
+        <button type="button" class="btn-ghost" id="videoTrimCancel">Отмена</button>
+        <button type="button" class="btn-green" id="videoTrimConfirm">Экспортировать</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="menu" id="menu" role="menu"></div>
 
-<input type="file" id="filePicker" accept="image/*" multiple hidden>
+<input type="file" id="filePicker" accept="image/*,video/*" multiple hidden>
 <input type="file" id="assetPicker" accept="image/png,image/webp,image/jpeg,image/svg+xml" hidden>
 
 <script>

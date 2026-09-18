@@ -10,7 +10,77 @@
   --green: #0dac67;
   --green-dark: #0b9a5c;
   --placeholder: #a1a1a1;
+  --scrollbar: #dcdcdc;
+  --track: #e9e9ed;
+  --footer-muted: #cacaca;
+  --footer-link: #727272;
+  --menu-hover: #f4f7f9;
+  --modal-text: #3d4348;
+  --control-hover-border: #cfd6dc;
+  --warn: #d98c00;
+  --icon-bg: #fff;
+  --icon-fg: #414141;
+  /* текст/значок поверх постоянно цветной (зелёной/оранжевой) плашки —
+     не меняется с темой, в отличие от --white (это цвет поверхности) */
+  --on-accent: #fff;
+  /* подпись-водяной знак на пустом превью (.frame .empty) лежит поверх
+     фиксированного брендового фона (чёрная обложка, серая рамка карточки),
+     а не поверх интерфейса — держим её светлой независимо от темы, иначе
+     в тёмной теме она сливается с тёмным --bg и становится невидимой */
+  --empty-label: #f1f5f8;
   --ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+}
+
+/*
+ * Тёмная тема: по умолчанию следует системной настройке (@media), явный
+ * выбор пользователя (кнопка в нижней панели, см. toggleTheme в app.js)
+ * перекрывает её через data-theme на <html> — поэтому набор переменных
+ * ниже продублирован для обоих случаев, а не вынесен в общий класс.
+ * Сами SVG-иконки (brand/icons/*.svg) вставляются в DOM как инлайн-разметка
+ * (см. paintIcons) и красятся через var(--icon-bg)/var(--icon-fg)/var(--control) —
+ * отдельного набора иконок для тёмной темы не нужно.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171b;
+    --white: #1e2227;
+    --border: #2c3137;
+    --hair: #33383e;
+    --ink: #eceef0;
+    --muted: #8a919b;
+    --field: #262b31;
+    --control: #cfd3d8;
+    --placeholder: #3a3f46;
+    --scrollbar: #3a4046;
+    --track: #2b3036;
+    --footer-muted: #4b5157;
+    --footer-link: #8a919b;
+    --menu-hover: #262b31;
+    --modal-text: #c7cbd1;
+    --control-hover-border: #3d434a;
+    --icon-bg: #262b31;
+    --icon-fg: #e5e7ea;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171b;
+  --white: #1e2227;
+  --border: #2c3137;
+  --hair: #33383e;
+  --ink: #eceef0;
+  --muted: #8a919b;
+  --field: #262b31;
+  --control: #cfd3d8;
+  --placeholder: #3a3f46;
+  --scrollbar: #3a4046;
+  --track: #2b3036;
+  --footer-muted: #4b5157;
+  --footer-link: #8a919b;
+  --menu-hover: #262b31;
+  --modal-text: #c7cbd1;
+  --control-hover-border: #3d434a;
+  --icon-bg: #262b31;
+  --icon-fg: #e5e7ea;
 }
 
 * { box-sizing: border-box; }
@@ -56,9 +126,9 @@ body {
 .panel-editor   { width: 432px; flex: 1 1 auto; min-width: 0; padding: 21px 12px 12px; }
 .panel-tools    { width: 260px; flex: none; padding: 23px 12px 12px; }
 
-.scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #dcdcdc transparent; }
+.scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .scroll::-webkit-scrollbar { width: 4px; }
-.scroll::-webkit-scrollbar-thumb { background: #dcdcdc; border-radius: 20px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 20px; }
 .scroll::-webkit-scrollbar-track { background: transparent; }
 
 .section-label {
@@ -92,8 +162,8 @@ body {
   top: 6px; right: 6px;
   width: 16px; height: 16px;
   border-radius: 50%;
-  background: #d98c00;
-  color: var(--white);
+  background: var(--warn);
+  color: var(--on-accent);
   font: 700 10px/16px var(--ui);
   text-align: center;
   pointer-events: none;
@@ -108,7 +178,7 @@ body {
   border: 0;
   border-radius: 50%;
   background: rgba(39, 39, 39, .55);
-  color: var(--white);
+  color: var(--on-accent);
   font: 700 10px/18px var(--ui);
   text-align: center;
   padding: 0;
@@ -135,7 +205,7 @@ body {
 .frame.multi-selected .select-badge::after {
   content: '✓';
   display: block;
-  color: var(--white);
+  color: var(--on-accent);
   font: 700 11px/16px var(--ui);
 }
 .frame.multi-selected { box-shadow: 0 0 0 2px var(--green) inset; }
@@ -175,7 +245,7 @@ body {
   position: absolute; inset: 0;
   display: grid; place-items: center;
   font: 600 8.5px/1.5 var(--ui);
-  color: var(--bg);
+  color: var(--empty-label);
   text-align: center; padding: 0 16px;
   pointer-events: none;
 }
@@ -329,7 +399,7 @@ body {
   position: relative;
   pointer-events: none;
 }
-.control:hover { border-color: #cfd6dc; }
+.control:hover { border-color: var(--control-hover-border); }
 
 .align-group {
   height: 36px;
@@ -370,7 +440,7 @@ body {
   height: 31px;
   flex: 1;
   background: var(--green);
-  color: var(--white);
+  color: var(--on-accent);
   border: 0; border-radius: 5px;
   font: 400 12px/1 var(--ui);
   cursor: pointer;
@@ -396,7 +466,7 @@ body {
   background-clip: content-box;
   padding: 7px 0;
   border-radius: 57px;
-  background: #e9e9ed;
+  background: var(--track);
   border: .5px solid var(--hair);
   cursor: pointer;
 }
@@ -425,10 +495,10 @@ body {
   justify-content: space-between;
   padding: 0 29px 0 29px;
   font: 400 12px/1.3 var(--ui);
-  color: #cacaca;
+  color: var(--footer-muted);
   pointer-events: none;
 }
-.page-footer a { color: #727272; text-decoration: none; pointer-events: auto; }
+.page-footer a { color: var(--footer-link); text-decoration: none; pointer-events: auto; }
 .page-footer a:hover { color: var(--green); }
 
 .tools-status {
@@ -471,6 +541,7 @@ body {
 .bar button.small svg { width: 30px; height: 30px; }
 .bar button:hover { filter: brightness(.94); }
 .bar button:disabled { opacity: .35; cursor: default; pointer-events: none; }
+.bar button.active { box-shadow: 0 0 0 2px var(--green); border-radius: 7px; }
 .bar .sep { width: 1px; height: 26px; background: var(--border); flex: none; }
 
 /* -------------------------------------------------------------- меню */
@@ -509,7 +580,11 @@ body {
 .modal-close:hover { color: var(--ink); }
 .modal-body h2 { font: 600 17px/1.3 var(--ui); margin: 0 0 4px; }
 .modal-body h3 { font: 600 12px/1.3 var(--ui); margin: 18px 0 5px; color: var(--green); }
-.modal-body p { font: 400 12px/1.55 var(--ui); margin: 0; color: #3d4348; }
+.modal-body p { font: 400 12px/1.55 var(--ui); margin: 0; color: var(--modal-text); }
+
+.video-trim-row { margin-top: 16px; }
+.video-trim-row .section-label { margin-bottom: 6px; }
+.video-trim-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 
 .menu {
   position: fixed;
@@ -531,7 +606,7 @@ body {
   color: var(--ink);
   padding: 8px 9px; border-radius: 6px; cursor: pointer;
 }
-.menu button:hover { background: #f4f7f9; }
+.menu button:hover { background: var(--menu-hover); }
 .menu button .tick { width: 12px; color: var(--green); }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px 2px; }
 .menu .group-label { font: 600 10px/1 var(--ui); color: var(--muted); padding: 7px 9px 5px; }

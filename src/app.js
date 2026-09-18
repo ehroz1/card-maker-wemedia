@@ -3,6 +3,7 @@
 const STORE_TEMPLATES = 'cardmaker.templates.v2';
 // v3: cardStyles хранится по стабильному ключу карточки (см. cardKeys), а не по позиции
 const STORE_PROJECT = 'cardmaker.project.v3';
+const STORE_THEME = 'cardmaker.theme.v1';
 const PREVIEW_CSS_WIDTH = 225;
 const PREVIEW_SCALE = 2;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
@@ -26,9 +27,11 @@ const state = {
   coverTitleSize: 60,
   coverBodySize: 45,
   cardsText: '',
-  // фото/стиль/трансформация карточек хранятся по стабильному ключу карточки
-  // (см. cardKeys), а не по позиции — иначе вставка или удаление карточки
-  // выше по тексту молча переносит фото и настройки на другую карточку
+  // фото или видео (по значению — HTMLImageElement либо HTMLVideoElement,
+  // см. isVideoFile/fileToVideo) на карточке, стиль и трансформация хранятся
+  // по стабильному ключу карточки (см. cardKeys), а не по позиции — иначе
+  // вставка или удаление карточки выше по тексту молча переносит их на
+  // другую карточку
   photosById: {},
   cardStylesById: {},   // стиль каждой карточки: то, что пользователь поменял руками
   transformsById: {},   // zoom/panX/panY/rotate каждой карточки с фото
@@ -99,6 +102,38 @@ function paintIcons(root = document) {
       node.dataset.painted = '1';
     }
   });
+}
+
+/* ----------------------------------------------------------------- тема */
+/*
+ * Тёмная тема — переключаемая, с запоминанием выбора. По умолчанию (пока
+ * пользователь ничего не выбрал) следует системной настройке через CSS
+ * (@media prefers-color-scheme) — атрибут data-theme на <html> тогда не
+ * ставится вовсе. Явный выбор сохраняется в localStorage и перекрывает
+ * системную тему через :root[data-theme="dark"]/[data-theme="light"] в
+ * styles.css. Применение сохранённого выбора при самом первом рисовании
+ * страницы (до этого скрипта) — см. небольшой инлайновый скрипт в <head>
+ * index.template.html, чтобы не было вспышки не той темы при загрузке.
+ */
+function systemPrefersDark() {
+  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+}
+function isDarkActive() {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === 'dark' : systemPrefersDark();
+}
+function syncThemeButton() {
+  const btn = document.getElementById('btnTheme');
+  if (!btn) return;
+  const dark = isDarkActive();
+  btn.title = dark ? 'Светлая тема' : 'Тёмная тема';
+  btn.classList.toggle('active', dark);
+}
+function toggleTheme() {
+  const next = isDarkActive() ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem(STORE_THEME, next); } catch { /* приватный режим — просто не запомнится */ }
+  syncThemeButton();
 }
 
 /* ------------------------------------------------------------- хранилище */
@@ -383,7 +418,27 @@ function splitCardBlocks(text) {
  * сразу был свой стабильный ключ (см. cardKeys), а не тот же, что у оригинала.
  * Вместе с текстом переносятся фото, ручной стиль и трансформация.
  */
-function duplicateCard(index) {
+/*
+ * Копия медиа для дублированной карточки. Фото — одна и та же декодированная
+ * картинка, ссылку можно смело шарить между двумя ключами. Видео — нет: это
+ * DOM-элемент с одним currentTime на двоих, поэтому у копии должен быть свой
+ * элемент (тот же источник), иначе перемотка или экспорт одной карточки
+ * будет двигать и другую.
+ */
+function cloneMediaForDuplicate(media) {
+  if (!(media instanceof HTMLVideoElement)) return Promise.resolve(media);
+  return new Promise((resolve, reject) => {
+    const clone = document.createElement('video');
+    clone.muted = true; clone.playsInline = true; clone.preload = 'auto';
+    clone.trimStart = media.trimStart; clone.trimEnd = media.trimEnd;
+    clone.durationUnknown = media.durationUnknown;
+    clone.onloadeddata = () => { clone.currentTime = clone.trimStart || 0; resolve(clone); };
+    clone.onerror = () => reject(new Error('не удалось скопировать видео'));
+    clone.src = media.currentSrc || media.src;
+  });
+}
+
+async function duplicateCard(index) {
   if (index < 0 || index >= state.cards.length) return;
   const { blocks, maxNum, markerRe } = splitCardBlocks(state.cardsText);
   if (index >= blocks.length) return;
@@ -402,7 +457,13 @@ function duplicateCard(index) {
 
   const newKey = state.cardIds[index + 1];
   if (oldKey && newKey && oldKey !== newKey) {
-    if (state.photosById[oldKey]) state.photosById[newKey] = state.photosById[oldKey];
+    if (state.photosById[oldKey]) {
+      try {
+        state.photosById[newKey] = await cloneMediaForDuplicate(state.photosById[oldKey]);
+      } catch (err) {
+        say('Не удалось скопировать видео: ' + err.message);
+      }
+    }
     if (state.cardStylesById[oldKey]) state.cardStylesById[newKey] = Object.assign({}, state.cardStylesById[oldKey]);
     if (state.transformsById[oldKey]) state.transformsById[newKey] = Object.assign({}, state.transformsById[oldKey]);
     syncCards(); buildPreviews(); saveProject();
@@ -540,10 +601,10 @@ function wirePreviewsBulkDrop() {
   el.previews.addEventListener('dragover', e => e.preventDefault());
   el.previews.addEventListener('drop', async e => {
     e.preventDefault();
-    const images = [...(e.dataTransfer.files || [])].filter(f => f.type.startsWith('image/'));
+    const images = [...(e.dataTransfer.files || [])].filter(isMediaFile);
     if (images.length <= 1) return;
     const n = await distributePhotos(images, 1);
-    say('Разложено фото по карточкам: ' + n);
+    say('Разложено по карточкам: ' + n);
   });
 }
 
@@ -635,13 +696,13 @@ function attachFrameEvents(frame, index) {
     }
 
     selectCard(index);
-    const images = [...(e.dataTransfer.files || [])].filter(f => f.type.startsWith('image/'));
+    const images = [...(e.dataTransfer.files || [])].filter(isMediaFile);
     if (!images.length) return;
     if (images.length === 1) {
       await setPhoto(index, images[0]);
     } else {
       const n = await distributePhotos(images, index);
-      say('Разложено фото по карточкам: ' + n);
+      say('Разложено по карточкам: ' + n);
     }
   });
 }
@@ -768,37 +829,93 @@ function fileToImage(file) {
   });
 }
 
+function isVideoFile(file) {
+  return file.type.startsWith('video/');
+}
+
+/* Годится ли файл (или DataTransferItem — у него тоже есть .type) в качестве медиа карточки. */
+function isMediaFile(file) {
+  return file.type.startsWith('image/') || isVideoFile(file);
+}
+
+/*
+ * Готовит видео как медиа карточки: ждёт метаданные и первый декодированный
+ * кадр, выставляет обрезку по умолчанию на весь ролик (video.trimStart/
+ * trimEnd — обычные свойства, повешенные прямо на элемент, отдельного
+ * хранилища под них не заводим). Источник — object URL, а не data URL как
+ * у фото: видео не грузится целиком в память строкой base64, браузер
+ * стримит его из Blob сам. Звук в экспортированном видео пока не пишется
+ * (см. exportVideoCard) — держим элемент немым и на превью, чтобы совпадало.
+ */
+function fileToVideo(file) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (fn === reject) URL.revokeObjectURL(video.src);
+      fn(arg);
+    };
+    video.onloadedmetadata = () => {
+      video.trimStart = 0;
+      // изредка браузер не знает длительность заранее (не дошита обложка
+      // контейнера) — считаем это минутным роликом, чем совсем не давать обрезать
+      video.trimEnd = isFinite(video.duration) ? video.duration : 60;
+      video.durationUnknown = !isFinite(video.duration);
+    };
+    // canplay иногда срабатывает раньше loadeddata (и наоборот, в зависимости
+    // от браузера/кодека) — берём что подоспеет первым, лишь бы кадр был готов
+    video.onloadeddata = () => finish(resolve, video);
+    video.oncanplay = () => finish(resolve, video);
+    video.onerror = () => finish(reject, new Error('не удалось прочитать видео — неподдерживаемый формат или кодек'));
+    // некоторые кодеки (например HEVC/H.265 из iPhone) не дают ни одного из
+    // событий выше в браузерах без их поддержки — без таймаута файл бы завис
+    // молча, без ошибки и без результата
+    const timer = setTimeout(
+      () => finish(reject, new Error('видео долго не загружается — возможно, браузер не поддерживает его формат')),
+      20000
+    );
+    video.src = URL.createObjectURL(file);
+  });
+}
+
 async function setPhoto(index, file, { skipUndo = false } = {}) {
   try {
-    const img = await fileToImage(file);
+    const media = isVideoFile(file) ? await fileToVideo(file) : await fileToImage(file);
     if (!skipUndo) pushUndo();
     if (index === 0) {
-      state.cover.img = img;
+      state.cover.img = media;
       state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
       state.cover.grayscale = false; state.cover.brightness = 100; state.cover.contrast = 100;
     } else {
       const key = state.cardIds[index - 1];
       if (key === undefined) return;
-      state.photosById[key] = img;
-      delete state.transformsById[key];   // новое фото — трансформация и фильтры сбрасываются
+      state.photosById[key] = media;
+      delete state.transformsById[key];   // новое фото/видео — трансформация и фильтры сбрасываются
       const card = state.cards[index - 1];
       if (card) {
-        card.img = img; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+        card.img = media; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
         card.grayscale = false; card.brightness = 100; card.contrast = 100;
       }
     }
     selectCard(index);
     scheduleRender();
-    say('Фото добавлено');
+    say(media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено');
   } catch (err) {
     say('Не получилось открыть файл: ' + err.message);
   }
 }
 
-/* Убирает фото с карточки — на случай, если передумали. Текст не трогает. */
+/* Убирает фото/видео с карточки — на случай, если передумали. Текст не трогает. */
 function removePhoto(index) {
   const card = allCards()[index];
   if (!card || !card.img) return;
+  const wasVideo = card.img instanceof HTMLVideoElement;
   pushUndo();
   if (index === 0) {
     state.cover.img = null;
@@ -813,7 +930,7 @@ function removePhoto(index) {
     card.grayscale = false; card.brightness = 100; card.contrast = 100;
   }
   scheduleRender();
-  say('Фото убрано');
+  say(wasVideo ? 'Видео убрано' : 'Фото убрано');
 }
 
 /*
@@ -1003,9 +1120,175 @@ function buildZip(files) {
   return out;
 }
 
+/* Ждёт, пока видео долистает до нужного момента (используется и на экспорте, и при копировании). */
+function seekTo(video, t) {
+  return new Promise(resolve => {
+    if (Math.abs(video.currentTime - t) < 0.01) { resolve(); return; }
+    const onSeeked = () => { video.removeEventListener('seeked', onSeeked); resolve(); };
+    video.addEventListener('seeked', onSeeked);
+    video.currentTime = t;
+  });
+}
+
+/*
+ * Пишет обрезанный фрагмент видео карточки в WebM: тот же renderCard(), что
+ * рисует статичные карточки, вызывается на каждом кадре, пока видео играет
+ * от video.trimStart до video.trimEnd, — так текст, лого и градиент горят
+ * поверх картинки кадр за кадром так же, как на фото-экспорте, просто не
+ * за один снимок, а живой записью canvas.captureStream() через
+ * MediaRecorder. Пишет без звука — это единственное отличие от полноценного
+ * видео-экспорта (см. README «Совместимость»), склейка звука через
+ * Web Audio — за рамками этой версии.
+ */
+async function exportVideoCard(card, index) {
+  if (!HTMLCanvasElement.prototype.captureStream || !window.MediaRecorder) {
+    throw new Error('браузер не умеет записывать видео с canvas');
+  }
+  const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+    .find(t => MediaRecorder.isTypeSupported(t));
+  if (!mimeType) throw new Error('браузер не поддерживает запись WebM');
+
+  const video = card.img;
+  const [W, H] = FORMATS[state.format];
+  const scale = state.exportScale;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  const assets = currentAssets();
+  const gradient = currentGradient();
+
+  const duration = video.durationUnknown ? 60 : (video.duration || 0);
+  const start = Math.max(0, Math.min(video.trimStart || 0, duration));
+  const end = Math.max(start + 0.1, Math.min(video.trimEnd ?? duration, duration));
+
+  const wasMuted = video.muted;
+  video.muted = true;
+  await seekTo(video, start);
+
+  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType, videoBitsPerSecond: 8_000_000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+
+  return await new Promise((resolve, reject) => {
+    let raf = null;
+    const hardStopAt = performance.now() + 5 * 60 * 1000;   // защита от зависания на странных файлах
+    const stop = () => {
+      cancelAnimationFrame(raf);
+      video.removeEventListener('timeupdate', onTick);
+      video.pause();
+      if (recorder.state !== 'inactive') recorder.stop();
+    };
+    const onTick = () => { if (video.currentTime >= end) stop(); };
+    const draw = () => {
+      try { renderCard(ctx, card, [W, H], assets, gradient); } catch { /* попробуем на следующем кадре */ }
+      if (video.currentTime >= end || video.ended || performance.now() > hardStopAt) { stop(); return; }
+      raf = requestAnimationFrame(draw);
+    };
+    recorder.onstop = () => {
+      video.muted = wasMuted;
+      resolve(new Blob(chunks, { type: 'video/webm' }));
+    };
+    recorder.onerror = e => { video.muted = wasMuted; reject(e.error || new Error('ошибка записи видео')); };
+    video.addEventListener('timeupdate', onTick);
+    recorder.start();
+    video.play().then(() => { raf = requestAnimationFrame(draw); }).catch(reject);
+  });
+}
+
+function formatSeconds(s) {
+  s = Math.max(0, Math.round(s));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+/*
+ * Перед экспортом, если среди карточек есть видео, спрашивает, какой
+ * промежуток каждого ролика обрезать (по умолчанию — весь ролик или то,
+ * что выбрали в прошлый раз). Возвращает true, если можно экспортировать,
+ * false — если отменили. Значения пишутся сразу в video.trimStart/trimEnd,
+ * поэтому следующий экспорт откроется с уже выбранным промежутком.
+ */
+function askVideoTrim(videoCards) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('videoTrimModal');
+    const body = document.getElementById('videoTrimBody');
+    body.innerHTML = '';
+
+    videoCards.forEach(({ card, index }) => {
+      const video = card.img;
+      const duration = video.durationUnknown ? 60 : (video.duration || 0);
+      const row = document.createElement('div');
+      row.className = 'video-trim-row';
+
+      const label = document.createElement('p');
+      label.className = 'section-label';
+      label.textContent = cardLabel(index) +
+        (video.durationUnknown ? ' — длительность не определилась, показана минута' : ' — ' + formatSeconds(duration));
+      row.appendChild(label);
+
+      const fields = document.createElement('div');
+      fields.className = 'control-row';
+      const makeField = (title, value) => {
+        const wrap = document.createElement('label');
+        wrap.className = 'control';
+        wrap.title = title;
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.min = '0';
+        input.max = String(duration);
+        input.step = '0.1';
+        input.value = String(Math.round(value * 10) / 10);
+        wrap.appendChild(input);
+        fields.appendChild(wrap);
+        return input;
+      };
+      const startInput = makeField('Начало, сек', Math.min(video.trimStart || 0, duration));
+      const endInput = makeField('Конец, сек', Math.min(video.trimEnd ?? duration, duration));
+      row.appendChild(fields);
+      body.appendChild(row);
+      row._inputs = { video, startInput, endInput, duration };
+    });
+
+    const finish = ok => {
+      modal.hidden = true;
+      cancelBtn.removeEventListener('click', onCancel);
+      confirmBtn.removeEventListener('click', onConfirm);
+      modal.removeEventListener('click', onBackdrop);
+      if (ok) {
+        [...body.children].forEach(row => {
+          const { video, startInput, endInput, duration } = row._inputs;
+          const start = Math.max(0, Math.min(Number(startInput.value) || 0, duration));
+          const end = Math.max(start + 0.1, Math.min(Number(endInput.value) || duration, duration));
+          video.trimStart = start;
+          video.trimEnd = end;
+        });
+      }
+      resolve(ok);
+    };
+    const onCancel = () => finish(false);
+    const onConfirm = () => finish(true);
+    const onBackdrop = e => { if (e.target === modal) finish(false); };
+
+    const cancelBtn = document.getElementById('videoTrimCancel');
+    const confirmBtn = document.getElementById('videoTrimConfirm');
+    cancelBtn.addEventListener('click', onCancel);
+    confirmBtn.addEventListener('click', onConfirm);
+    modal.addEventListener('click', onBackdrop);
+    modal.hidden = false;
+  });
+}
+
 async function exportAll() {
   const list = allCards().filter(hasContent);
   if (!list.length) { say('Пока нечего экспортировать'); return; }
+
+  const videoCards = list
+    .map((card, index) => ({ card, index }))
+    .filter(({ card }) => card.img instanceof HTMLVideoElement);
+  if (videoCards.length) {
+    const proceed = await askVideoTrim(videoCards);
+    if (!proceed) { say('Экспорт отменён'); return; }
+  }
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
@@ -1013,14 +1296,22 @@ async function exportAll() {
   let failed = 0;
 
   for (let i = 0; i < list.length; i++) {
+    const card = list[i];
+    const isVideo = card.img instanceof HTMLVideoElement;
+    const name = (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') +
+      '.' + (isVideo ? 'webm' : ext);
     let blob = null;
     try {
-      blob = await canvasToBlob(renderFull(list[i]), mime, 0.95);
+      if (isVideo) {
+        say(`Записываю видео — карточка ${i === 0 ? 'обложка' : i}…`);
+        blob = await exportVideoCard(card, i);
+      } else {
+        blob = await canvasToBlob(renderFull(card), mime, 0.95);
+      }
     } catch (err) {
-      console.error('не удалось отрисовать карточку для экспорта', i, err);
+      console.error('не удалось подготовить карточку для экспорта', i, err);
     }
     if (!blob) { failed++; continue; }
-    const name = (i === 0 && list[i].kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
     rendered.push({ name, blob });
   }
   if (!rendered.length) { say('Не удалось подготовить файлы'); return; }
@@ -1054,7 +1345,9 @@ async function pasteFromClipboard() {
   try {
     const items = await navigator.clipboard.read();
     for (const item of items) {
-      const type = item.types.find(t => t.startsWith('image/'));
+      // видео в буфере обмена браузеры пока почти не кладут, но если
+      // когда-нибудь начнут — сработает тем же путём, что и фото
+      const type = item.types.find(t => t.startsWith('image/') || t.startsWith('video/'));
       if (type) { await setPhoto(state.current, await item.getType(type)); return; }
     }
     const text = await navigator.clipboard.readText();
@@ -1397,15 +1690,23 @@ const HELP = [
   ['Вставка из других программ',
    'Текст из Google Документов, Telegram и Word вставляется вместе с жирным ' +
    'и курсивом — форматирование не теряется.'],
-  ['Фотографии',
+  ['Фотографии и видео',
    'Перетащи файл на нужное превью, либо выдели превью и нажми ⌘V, либо ' +
-   'используй первую кнопку внизу. Колесо мыши на превью — масштаб, ' +
-   'перетаскивание — сдвиг кадра. Точные значения — в блоке «Трансформация». ' +
-   'Если перетащить или выбрать сразу несколько фото, они разложатся по ' +
-   'карточкам по порядку, пропуская карточки без фото (//N-). Крестик ' +
-   'в углу превью (появляется, если на карточке есть фото) убирает фото ' +
-   'обратно — текст при этом не трогается. В блоке «Трансформация» — ещё ' +
-   'чёрно-белое, яркость и контраст, тоже для фото выбранной карточки.'],
+   'используй первую кнопку внизу — подойдёт и фото, и видео. Колесо мыши ' +
+   'на превью — масштаб, перетаскивание — сдвиг кадра. Точные значения — ' +
+   'в блоке «Трансформация». Если перетащить или выбрать сразу несколько ' +
+   'файлов, они разложатся по карточкам по порядку, пропуская карточки без ' +
+   'медиа (//N-). Крестик в углу превью (появляется, если на карточке есть ' +
+   'фото или видео) убирает его обратно — текст при этом не трогается. ' +
+   'В блоке «Трансформация» — ещё чёрно-белое, яркость и контраст, тоже ' +
+   'применяются и к фото, и к видео выбранной карточки.'],
+  ['Видео на карточке',
+   'Работает как фото: та же вставка, то же масштабирование, сдвиг, поворот, ' +
+   'чёрно-белое, яркость и контраст. Перед экспортом появится окно «Обрезка ' +
+   'видео» — для каждой карточки с видео укажи начало и конец нужного ' +
+   'фрагмента в секундах, остальное обрежется. Экспортируется как WEBM ' +
+   'без звука — обработка полностью локальная, в браузере, без отправки ' +
+   'файлов куда-либо.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -1431,17 +1732,25 @@ const HELP = [
    'они автоматически переносятся вместе со следующим словом.'],
   ['Экспорт',
    'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
-   'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей. ' +
+   'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей; ' +
+   'карточки с видео экспортируются в WEBM независимо от выбранного формата. ' +
    'Галочка «Одним ZIP-архивом» — вместо файла за файлом скачивается один ' +
    'архив со всеми карточками. Кнопка с самолётиком отдаёт карточки ' +
-   'в системное окно «Поделиться», откуда их можно отправить в Telegram. ' +
-   '⌘C копирует выбранную карточку в буфер обмена.'],
+   'в системное окно «Поделиться», откуда их можно отправить в Telegram — ' +
+   'для видео при этом отправится один кадр, а не сам ролик. ' +
+   '⌘C копирует выбранную карточку в буфер обмена (тоже кадром для видео).'],
   ['Шаблоны',
    'Иконка с сеткой внизу — логотипы проекта и переключение между проектами. ' +
    'Там же, внизу списка — «Сохранить проект в файл» и «Загрузить проект ' +
    'из файла»: весь текст и настройки (без фото) можно перенести на другой ' +
    'компьютер или сохранить как резервную копию. ' +
    'Иконка с карандашом — размер карточки и настройка затемнения на обложке.'],
+  ['Тёмная тема',
+   'Последняя кнопка в нижней панели переключает оформление интерфейса ' +
+   'между светлым и тёмным — на сами карточки это никак не влияет, ' +
+   'они выглядят одинаково в любой теме. Пока не нажмёшь кнопку, тема ' +
+   'подстраивается под системную настройку устройства и меняется вместе ' +
+   'с ней; после нажатия выбор запоминается и не зависит от системной темы.'],
 ];
 
 function openHelp() {
@@ -1936,11 +2245,12 @@ function wireEvents() {
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
   document.getElementById('btnHelp').addEventListener('click', openHelp);
+  document.getElementById('btnTheme').addEventListener('click', toggleTheme);
   document.getElementById('helpClose').addEventListener('click', closeHelp);
   document.getElementById('helpModal').addEventListener('click', e => {
     if (e.target.id === 'helpModal') closeHelp();
   });
-  document.getElementById('btnSelect').addEventListener('click', () => {
+  document.getElementById('btnImport').addEventListener('click', () => {
     el.filePicker.value = '';
     el.filePicker.click();
   });
@@ -1960,7 +2270,7 @@ function wireEvents() {
     if (!files.length) return;
     if (files.length === 1) { await setPhoto(state.current, files[0]); return; }
     const n = await distributePhotos(files, Math.max(1, state.current));
-    say('Разложено фото по карточкам: ' + n);
+    say('Разложено по карточкам: ' + n);
   });
 
   el.assetPicker.addEventListener('change', () => {
@@ -1986,9 +2296,9 @@ function wireEvents() {
     const data = e.clipboardData;
     if (!data) return;
 
-    // картинка из буфера — в выбранную карточку
+    // фото или видео из буфера — в выбранную карточку
     const file = [...(data.items || [])]
-      .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+      .filter(it => it.kind === 'file' && isMediaFile(it))
       .map(it => it.getAsFile())[0];
     if (file) { e.preventDefault(); await setPhoto(state.current, file); return; }
 
@@ -2085,6 +2395,15 @@ function fillControls() {
 
 async function start() {
   paintIcons();
+  syncThemeButton();
+  // пока пользователь не выбрал тему вручную (нет data-theme), кнопка должна
+  // отражать живое изменение системной темы, не только клик
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onSystemThemeChange = () => { if (!document.documentElement.dataset.theme) syncThemeButton(); };
+    if (mq.addEventListener) mq.addEventListener('change', onSystemThemeChange);
+    else if (mq.addListener) mq.addListener(onSystemThemeChange);   // старый Safari
+  }
   loadTemplates();
   if (!loadProject()) state.cardsText = SAMPLE;
   await prepareAssets(state.templateName);

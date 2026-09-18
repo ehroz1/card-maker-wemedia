@@ -91,9 +91,9 @@ by the build into one `<script>` tag, sharing globals):
 - **`src/app.js`** — all UI wiring, app `state`, and glue between the editor and
   renderer. Key ideas: `state.cards` is rebuilt from `state.cardsText` via
   `syncCards()` on every input; per-card data that must survive a rebuild
-  (photo, manual style override, image zoom/pan/rotate) is keyed not by array
-  position but by a stable key from `cardKeys()` — the card's `//` marker text
-  plus an occurrence count — and stored in `state.photosById`/
+  (photo/video, manual style override, image zoom/pan/rotate) is keyed not by
+  array position but by a stable key from `cardKeys()` — the card's `//`
+  marker text plus an occurrence count — and stored in `state.photosById`/
   `state.cardStylesById`/`state.transformsById`; `state.cardIds` holds the keys
   for the current `state.cards`, parallel by index, so UI code that operates
   positionally (selection, drag/pinch/wheel handlers, `setPhoto`) can look up
@@ -126,8 +126,64 @@ fully-bold line = larger subtitle) is documented for end users in README.md and
 implemented across `parseCards` (render.js) and the markup⇄HTML conversion
 (editor.js) — keep both in sync when changing the format.
 
+**Video support** generalizes the existing photo pipeline rather than
+duplicating it: `state.photosById[id]` holds either an `HTMLImageElement` or
+an `HTMLVideoElement`, and `ctx.drawImage()`/canvas rendering in `render.js`
+accepts both interchangeably, so `renderCard`/`drawPhoto`/`coverCrop` needed
+almost no video-specific branching — the one exception is `coverCrop`, which
+reads `img.videoWidth || img.width` (`<video>.width`/`.height` are HTML
+attributes, not the decoded frame size, unlike `<img>`). `fileToVideo()` in
+app.js (parallel to `fileToImage()`) creates the `<video>` element via
+`URL.createObjectURL` (not a data URI — keeps large video files out of
+memory as base64) and stashes `trimStart`/`trimEnd`/`durationUnknown`
+directly as properties on the element itself, which is enough for them to
+ride along through undo/redo (`state.photosById` snapshots are shallow
+copies) without any new persistence machinery. Because a `<video>` element
+has a single shared `currentTime`, `duplicateCard` cannot share a video
+reference the way it safely shares an `Image` between two card keys — it
+goes through `cloneMediaForDuplicate()` to create an independent `<video>`
+on the same source URL, which is why `duplicateCard` is `async`. Export asks
+the user for a trim range per video card (`askVideoTrim`, a modal built like
+`#helpModal`) immediately before the export loop runs, then
+`exportVideoCard` re-draws `renderCard()` on every `requestAnimationFrame`
+while the source video plays through the trim window, captured via
+`canvas.captureStream()` + `MediaRecorder` into a WEBM blob — deliberately
+silent (no audio track): muxing audio and video client-side was judged too
+fragile for this pass. `copyCurrent()`/`sendToTelegram()` were deliberately
+left photo-only in behavior — for a video card they fall back to snapshotting
+the current frame, not the full clip. Videos are never explicitly
+`URL.revokeObjectURL()`-ed, matching the existing precedent of never
+disposing photo `Image` objects (both can still be reachable from the undo
+stack).
+
+**Dark theme** covers the tool's own UI chrome only — never the exported cards,
+which always render in fixed brand colors regardless of app theme (`render.js`
+has no theme awareness at all, by design). All chrome colors are CSS custom
+properties on `:root` in `styles.css`; dark values live in two blocks that must
+be kept in sync: `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {...} }`
+(follows the OS setting until the user picks explicitly) and `:root[data-theme="dark"]`
+(the explicit override, set by `toggleTheme()` in app.js and persisted to
+`localStorage` under `cardmaker.theme.v1`). A tiny inline `<script>` in
+`index.template.html`'s `<head>` — before `<style>`, deliberately not templated
+through `__APP_JS__` — applies a saved explicit choice before first paint to
+avoid a flash of the wrong theme; it must stay a plain inline script for that
+ordering to work. Icons (`brand/icons/*.svg`) are inserted into the DOM as live
+markup (`node.innerHTML = svg` in `paintIcons`), not `<img>`/data-URIs, so they
+can reference the same CSS variables directly in their own `fill`/`stroke`
+attributes (`var(--icon-bg)`/`var(--icon-fg)` for the neutral bar-button icons,
+`var(--control)` for the small inline glyphs like the select caret) and repaint
+automatically with the theme — a new icon should follow this convention rather
+than hardcoding `white`/`#414141`. Two color roles are intentionally *not*
+theme-reactive and must stay off the `--white`/`--ink` etc. variables: brand
+accents (`--green`, the amber `--warn`) and `--on-accent` (always `#fff`, for
+text/glyphs drawn on top of a permanently-colored surface like `.btn-green` or
+the multi-select checkmark badge) — using the wrong one is the easiest way to
+end up with invisible text after a theme edit.
+
 Compatibility constraints baked into the code (see README.md "Совместимость"):
 letter-spacing falls back to manual per-character drawing when
 `ctx.letterSpacing` is unsupported; missing `ResizeObserver`/clipboard API must
 degrade gracefully rather than break the page; `localStorage` may be unavailable
-in private browsing.
+in private browsing; video export feature-detects `MediaRecorder.isTypeSupported()`
+(vp9 → vp8 → plain webm) and fails with a clear message rather than a crash
+if none is supported, without blocking export of the remaining photo cards.
