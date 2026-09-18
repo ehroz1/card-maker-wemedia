@@ -1274,12 +1274,14 @@ function seekTo(video, t) {
 
 /*
  * Кандидаты MediaRecorder в порядке предпочтения: настоящий MP4 первым (его
- * поддерживает Safari — MediaRecorder может писать video/mp4 с 14.1), иначе
- * откат на WebM (Chrome/Firefox не умеют писать MP4 через MediaRecorder без
- * стороннего кодировщика вроде ffmpeg.wasm — а тянуть в проект тяжёлую
- * WASM-библиотеку ради этого значит нарушить принцип «один файл, без
- * зависимостей», см. CLAUDE.md). Так что MP4 — там, где браузер даёт его
- * нативно, WebM — везде остальном, без исключений.
+ * поддерживает Safari — MediaRecorder может писать video/mp4 с 14.1, и, как
+ * выяснилось, современный Chrome/Edge тоже), иначе откат на WebM
+ * (стороннего кодировщика вроде ffmpeg.wasm сознательно нет — тянуть в
+ * проект тяжёлую WASM-библиотеку ради этого значит нарушить принцип «один
+ * файл, без зависимостей», см. CLAUDE.md). Отдельный список для варианта
+ * со звуком: конкретные явные строки кодека для AAC (`mp4a.40.2`/`aac`)
+ * `MediaRecorder.isTypeSupported()` не распознаёт, зато распознаёт голый
+ * `video/mp4` — браузер сам выбирает подходящую звуковую дорожку внутри.
  */
 const VIDEO_EXPORT_CANDIDATES = [
   { mime: 'video/mp4;codecs=avc1.42E01E', ext: 'mp4' },
@@ -1289,6 +1291,12 @@ const VIDEO_EXPORT_CANDIDATES = [
   { mime: 'video/webm;codecs=vp8', ext: 'webm' },
   { mime: 'video/webm', ext: 'webm' },
 ];
+const VIDEO_EXPORT_CANDIDATES_WITH_AUDIO = [
+  { mime: 'video/mp4', ext: 'mp4' },
+  { mime: 'video/webm;codecs=vp9,opus', ext: 'webm' },
+  { mime: 'video/webm;codecs=vp8,opus', ext: 'webm' },
+  { mime: 'video/webm', ext: 'webm' },
+];
 
 /*
  * Пишет обрезанный фрагмент видео карточки: тот же renderCard(), что рисует
@@ -1296,17 +1304,20 @@ const VIDEO_EXPORT_CANDIDATES = [
  * video.trimStart до video.trimEnd, — так текст, лого и градиент горят
  * поверх картинки кадр за кадром так же, как на фото-экспорте, просто не
  * за один снимок, а живой записью canvas.captureStream() через
- * MediaRecorder. Пишет без звука — это единственное отличие от полноценного
- * видео-экспорта (см. README «Совместимость»), склейка звука через
- * Web Audio — за рамками этой версии. onProgress(0..1), если передан,
- * получает долю уже записанного фрагмента — для полоски прогресса.
+ * MediaRecorder. Звук берём не через Web Audio (сложнее и не нужно), а
+ * напрямую с video.captureStream().getAudioTracks() — это отдаёт настоящую
+ * звуковую дорожку источника, даже когда сам элемент video.muted (проверено:
+ * muted глушит только вывод на колонки, а не сырой поток) — и добавляем её
+ * к видео-дорожке с канваса в один MediaStream перед записью. Если у
+ * браузера нет captureStream() на <video> (Safari до недавних версий) или
+ * у ролика нет своей звуковой дорожки — пишем как раньше, без звука.
+ * onProgress(0..1), если передан, получает долю уже записанного фрагмента —
+ * для полоски прогресса.
  */
 async function exportVideoCard(card, index, onProgress) {
   if (!HTMLCanvasElement.prototype.captureStream || !window.MediaRecorder) {
     throw new Error('браузер не умеет записывать видео с canvas');
   }
-  const picked = VIDEO_EXPORT_CANDIDATES.find(c => MediaRecorder.isTypeSupported(c.mime));
-  if (!picked) throw new Error('браузер не поддерживает запись видео');
 
   const video = card.img;
   video._previewPlaying = false;   // на случай, если играл предпросмотр именно этой карточки
@@ -1327,7 +1338,23 @@ async function exportVideoCard(card, index, onProgress) {
   video.muted = true;
   await seekTo(video, start);
 
-  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: picked.mime, videoBitsPerSecond: 8_000_000 });
+  const canvasStream = canvas.captureStream(30);
+  let audioTracks = [];
+  const captureAudio = video.captureStream || video.mozCaptureStream;
+  if (captureAudio) {
+    try { audioTracks = captureAudio.call(video).getAudioTracks(); }
+    catch { /* какой-то браузер отказал — просто пишем без звука */ }
+  }
+  const hasAudio = audioTracks.length > 0;
+  const combinedStream = hasAudio
+    ? new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
+    : canvasStream;
+
+  const candidates = hasAudio ? VIDEO_EXPORT_CANDIDATES_WITH_AUDIO : VIDEO_EXPORT_CANDIDATES;
+  const picked = candidates.find(c => MediaRecorder.isTypeSupported(c.mime));
+  if (!picked) throw new Error('браузер не поддерживает запись видео');
+
+  const recorder = new MediaRecorder(combinedStream, { mimeType: picked.mime, videoBitsPerSecond: 8_000_000 });
   const chunks = [];
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
@@ -1987,8 +2014,10 @@ const HELP = [
    'и конец в секундах, кнопка «▶ Просмотр» проигрывает именно выбранный ' +
    'кусок. Значок «✂» в углу превью карточки открывает это окно заново в любой ' +
    'момент. Кнопка «▶» по центру превью проигрывает обрезанный фрагмент ' +
-   'прямо в карточке (в превью, без звука — так же, как и в самом экспорте). ' +
-   'Обработка полностью локальная, в браузере, без отправки файлов куда-либо.'],
+   'прямо в карточке — предпросмотр всегда без звука, а вот в экспорт звук ' +
+   'попадает, если он есть в исходном ролике и браузер умеет его записывать ' +
+   '(так почти везде, кроме старых Safari). Обработка полностью локальная, ' +
+   'в браузере, без отправки файлов куда-либо.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -2016,8 +2045,9 @@ const HELP = [
    'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
    'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей; ' +
    'карточки с видео экспортируются в MP4, если браузер умеет его писать ' +
-   '(например Chrome), иначе — в WEBM без звука. Обрезка на экспорт не ' +
-   'спрашивается — берётся то, что уже выбрано в окне «Обрезка видео» ' +
+   '(например Chrome), иначе — в WEBM; звук из исходного ролика сохраняется ' +
+   'в обоих случаях, если браузер умеет его записывать. Обрезка на экспорт ' +
+   'не спрашивается — берётся то, что уже выбрано в окне «Обрезка видео» ' +
    '(см. «Видео на карточке»). Пока идёт экспорт, под кнопкой Export бежит ' +
    'полоска прогресса. Галочка «Одним ZIP-архивом» — вместо файла за файлом ' +
    'скачивается один архив со всеми карточками. Кнопка с самолётиком отдаёт ' +
