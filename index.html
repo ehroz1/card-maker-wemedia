@@ -2351,11 +2351,12 @@ function cloneMediaForDuplicate(media) {
   if (!(media instanceof HTMLVideoElement)) return Promise.resolve(media);
   return new Promise((resolve, reject) => {
     const clone = document.createElement('video');
-    clone.muted = true; clone.playsInline = true; clone.preload = 'auto';
+    clone.muted = media.muted; clone.playsInline = true; clone.preload = 'auto';
     clone.trimStart = media.trimStart; clone.trimEnd = media.trimEnd;
     clone.durationUnknown = media.durationUnknown;
     clone.onloadeddata = () => { clone.currentTime = clone.trimStart || 0; resolve(clone); };
     clone.onerror = () => reject(new Error('не удалось скопировать видео'));
+    wirePreviewLoop(clone);
     clone.src = media.currentSrc || media.src;
   });
 }
@@ -2798,13 +2799,32 @@ function isMediaFile(file) {
  * trimEnd — обычные свойства, повешенные прямо на элемент, отдельного
  * хранилища под них не заводим). Источник — object URL, а не data URL как
  * у фото: видео не грузится целиком в память строкой base64, браузер
- * стримит его из Blob сам. Звук в экспортированном видео пока не пишется
- * (см. exportVideoCard) — держим элемент немым и на превью, чтобы совпадало.
+ * стримит его из Blob сам. Элемент НЕ немой — звук в предпросмотре (кнопка
+ * «▶» на карточке, «▶ Просмотр» в окне обрезки) теперь слышен, раз он есть
+ * и в экспорте (см. exportVideoCard). Немым видео становится только на
+ * время самой записи экспорта — чтобы не звучало из колонок при экспорте
+ * нескольких видео разом — и возвращается обратно сразу после.
  */
+/*
+ * Общий слушатель для обеих копий видео-элемента (fileToVideo и
+ * cloneMediaForDuplicate) — зацикливает проигрывание предпросмотра внутри
+ * выбранного промежутка (video.trimStart/trimEnd), пока video._previewPlaying.
+ * На экспорт не влияет — там свой отдельный слушатель timeupdate в
+ * exportVideoCard, а stopAllVideoPreviews() перед экспортом гасит эту петлю.
+ */
+function wirePreviewLoop(video) {
+  video.addEventListener('timeupdate', () => {
+    if (!video._previewPlaying) return;
+    const end = video.trimEnd ?? video.duration;
+    if (isFinite(end) && video.currentTime >= end - 0.02) {
+      video.currentTime = video.trimStart || 0;
+    }
+  });
+}
+
 function fileToVideo(file) {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
-    video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
     let settled = false;
@@ -2834,18 +2854,7 @@ function fileToVideo(file) {
       () => finish(reject, new Error('видео долго не загружается — возможно, браузер не поддерживает его формат')),
       20000
     );
-    // проигрывание превью (кнопка на карточке, просмотр в окне обрезки —
-    // см. video._previewPlaying) зациклено внутри выбранного промежутка,
-    // а не всего ролика; на экспорт не влияет — там свой отдельный слушатель
-    // timeupdate в exportVideoCard, и стоп-старт этой петли перед экспортом
-    // выключается через stopAllVideoPreviews()
-    video.addEventListener('timeupdate', () => {
-      if (!video._previewPlaying) return;
-      const end = video.trimEnd ?? video.duration;
-      if (isFinite(end) && video.currentTime >= end - 0.02) {
-        video.currentTime = video.trimStart || 0;
-      }
-    });
+    wirePreviewLoop(video);
     video.src = URL.createObjectURL(file);
   });
 }
@@ -3195,6 +3204,22 @@ function seekTo(video, t) {
 }
 
 /*
+ * Сколько видео-карточек пишутся одновременно при экспорте (см. exportAll).
+ * Запись видео идёт в реальном времени (см. exportVideoCard) — параллельная
+ * запись нескольких карточек не ускоряет запись КАЖДОЙ из них, зато
+ * несколько независимых карточек пишутся одновременно вместо по очереди, и
+ * общее время экспорта карусели с видео падает примерно в число раз, равное
+ * этому пределу. Не делаем это число неограниченным — десяток одновременных
+ * MediaRecorder на слабом устройстве скорее уронит кадры или упадёт по
+ * памяти, чем ускорит дело; ограничиваем и числом ядер (грубая оценка
+ * мощности устройства), и жёстким потолком.
+ */
+const VIDEO_EXPORT_CONCURRENCY = Math.max(
+  2,
+  Math.min(4, Math.floor((navigator.hardwareConcurrency || 4) / 2))
+);
+
+/*
  * Кандидаты MediaRecorder в порядке предпочтения: настоящий MP4 первым (его
  * поддерживает Safari — MediaRecorder может писать video/mp4 с 14.1, и, как
  * выяснилось, современный Chrome/Edge тоже), иначе откат на WebM
@@ -3502,9 +3527,15 @@ function askVideoTrim(videoCards, opts = {}) {
  * при загрузке — см. setPhoto, и её можно поменять кнопкой «✂» на превью
  * в любой момент), поэтому сам экспорт больше не прерывается модалкой —
  * просто использует то, что лежит в video.trimStart/trimEnd на каждой
- * карточке. Полоска прогресса — общая доля готовых карточек; фото готовятся
- * мгновенно, видео пишутся в реальном времени, поэтому именно видео двигает
- * полоску плавно внутри своей доли (см. onProgress в exportVideoCard).
+ * карточке. Фото готовятся мгновенно и все сразу (Promise.all — тут нечего
+ * ограничивать, канвас-рендер быстрый). Видео пишутся в реальном времени
+ * (см. exportVideoCard) — единственный способ ускорить именно ИХ суммарно
+ * это писать по VIDEO_EXPORT_CONCURRENCY штук одновременно вместо по
+ * очереди: пока обычный for-await ждал бы карточку за карточкой (сумма всех
+ * длительностей), пул воркеров ниже держит несколько записей в работе разом,
+ * и общее время стремится к самой длинной карточке в самой нагруженной
+ * группе, а не к сумме всех. Полоска прогресса — общая доля готовности по
+ * всем карточкам разом (progress[i] на каждую, см. updateTotal).
  */
 async function exportAll() {
   const list = allCards().filter(hasContent);
@@ -3514,35 +3545,65 @@ async function exportAll() {
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const photoExt = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
-  const rendered = [];
+  const slots = new Array(list.length).fill(null);
+  const progress = new Array(list.length).fill(0);
   let failed = 0;
   showExportProgress();
 
-  for (let i = 0; i < list.length; i++) {
-    const card = list[i];
-    const isVideo = card.img instanceof HTMLVideoElement;
-    const baseFrac = i / list.length;
-    const step = 1 / list.length;
-    updateExportProgress(baseFrac);
-    let blob = null, ext = photoExt;
-    try {
-      if (isVideo) {
-        say(`Записываю видео — карточка ${i === 0 ? 'обложка' : i}…`);
-        const result = await exportVideoCard(card, i, p => updateExportProgress(baseFrac + p * step));
-        blob = result.blob; ext = result.ext;
-      } else {
-        blob = await canvasToBlob(renderFull(card), mime, 0.95);
+  const updateTotal = () => {
+    updateExportProgress(progress.reduce((a, b) => a + b, 0) / list.length);
+  };
+  const nameFor = (i, card, ext) =>
+    (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
+
+  const photoJobs = list.map((card, i) => {
+    if (card.img instanceof HTMLVideoElement) return null;
+    return (async () => {
+      try {
+        const blob = await canvasToBlob(renderFull(card), mime, 0.95);
+        slots[i] = { name: nameFor(i, card, photoExt), blob };
+      } catch (err) {
+        console.error('не удалось подготовить карточку для экспорта', i, err);
+        failed++;
       }
-    } catch (err) {
-      console.error('не удалось подготовить карточку для экспорта', i, err);
-    }
-    updateExportProgress((i + 1) / list.length);
-    if (!blob) { failed++; continue; }
-    const name = (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') +
-      '.' + ext;
-    rendered.push({ name, blob });
+      progress[i] = 1;
+      updateTotal();
+    })();
+  }).filter(Boolean);
+
+  const videoIndices = list
+    .map((card, i) => (card.img instanceof HTMLVideoElement ? i : -1))
+    .filter(i => i >= 0);
+  if (videoIndices.length) {
+    say(videoIndices.length === 1
+      ? 'Записываю видео…'
+      : `Записываю видео (${videoIndices.length} шт., до ${Math.min(VIDEO_EXPORT_CONCURRENCY, videoIndices.length)} одновременно)…`);
   }
+  let cursor = 0;
+  const videoWorker = async () => {
+    while (cursor < videoIndices.length) {
+      const i = videoIndices[cursor++];
+      const card = list[i];
+      try {
+        const result = await exportVideoCard(card, i, p => { progress[i] = p; updateTotal(); });
+        slots[i] = { name: nameFor(i, card, result.ext), blob: result.blob };
+      } catch (err) {
+        console.error('не удалось подготовить карточку для экспорта', i, err);
+        failed++;
+      }
+      progress[i] = 1;
+      updateTotal();
+    }
+  };
+  const videoWorkers = Array.from(
+    { length: Math.min(VIDEO_EXPORT_CONCURRENCY, videoIndices.length) },
+    videoWorker
+  );
+
+  await Promise.all([...photoJobs, ...videoWorkers]);
   hideExportProgress();
+
+  const rendered = slots.filter(Boolean);
   if (!rendered.length) { say('Не удалось подготовить файлы'); return; }
 
   if (state.exportZip) {
@@ -3934,12 +3995,12 @@ const HELP = [
    'чёрно-белое, яркость и контраст. Сразу после загрузки открывается окно ' +
    '«Обрезка видео» — на видео-превью тяни зелёные ползунки или впиши начало ' +
    'и конец в секундах, кнопка «▶ Просмотр» проигрывает именно выбранный ' +
-   'кусок. Значок «✂» в углу превью карточки открывает это окно заново в любой ' +
-   'момент. Кнопка «▶» по центру превью проигрывает обрезанный фрагмент ' +
-   'прямо в карточке — предпросмотр всегда без звука, а вот в экспорт звук ' +
-   'попадает, если он есть в исходном ролике и браузер умеет его записывать ' +
-   '(так почти везде, кроме старых Safari). Обработка полностью локальная, ' +
-   'в браузере, без отправки файлов куда-либо.'],
+   'кусок со звуком. Значок «✂» в углу превью карточки открывает это окно ' +
+   'заново в любой момент. Кнопка «▶» по центру превью проигрывает обрезанный ' +
+   'фрагмент прямо в карточке — тоже со звуком, если он есть в исходном ' +
+   'ролике. Тот же звук попадает и в экспорт, если браузер умеет его ' +
+   'записывать (так почти везде, кроме старых Safari). Обработка полностью ' +
+   'локальная, в браузере, без отправки файлов куда-либо.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -3970,8 +4031,12 @@ const HELP = [
    '(например Chrome), иначе — в WEBM; звук из исходного ролика сохраняется ' +
    'в обоих случаях, если браузер умеет его записывать. Обрезка на экспорт ' +
    'не спрашивается — берётся то, что уже выбрано в окне «Обрезка видео» ' +
-   '(см. «Видео на карточке»). Пока идёт экспорт, под кнопкой Export бежит ' +
-   'полоска прогресса. Галочка «Одним ZIP-архивом» — вместо файла за файлом ' +
+   '(см. «Видео на карточке»). Если видео-карточек несколько, они пишутся ' +
+   'не по очереди, а по нескольку одновременно (сколько — зависит от ' +
+   'мощности устройства), поэтому экспорт карусели с видео занимает время ' +
+   'примерно как самая долгая карточка в группе, а не сумма всех. Пока идёт ' +
+   'экспорт, под кнопкой Export бежит полоска прогресса. Галочка «Одним ' +
+   'ZIP-архивом» — вместо файла за файлом ' +
    'скачивается один архив со всеми карточками. Кнопка с самолётиком отдаёт ' +
    'карточки в системное окно «Поделиться», откуда их можно отправить ' +
    'в Telegram — для видео при этом отправится один кадр, а не сам ролик. ' +

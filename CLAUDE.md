@@ -160,10 +160,13 @@ never in the DOM (only ever a `ctx.drawImage()` source). Playing a video's
 preview in its card thumbnail (the "▶" button `buildPreviews()` also adds)
 works the same way at a smaller scale: `toggleVideoPreviewPlayback` sets
 `video._previewPlaying` and calls `.play()`, a `timeupdate` listener
-installed once in `fileToVideo()` loops `currentTime` back to `trimStart`
-whenever playback reaches `trimEnd` (only while `_previewPlaying` is true —
-export doesn't set that flag, so its own `timeupdate` stop-detection in
-`exportVideoCard` never races with it), and a shared
+(`wirePreviewLoop`, shared between `fileToVideo()` and
+`cloneMediaForDuplicate()` so a duplicated video card's preview loops too —
+it was previously missing there, a latent gap from before preview-looping
+existed) loops `currentTime` back to `trimStart` whenever playback reaches
+`trimEnd` (only while `_previewPlaying` is true — export doesn't set that
+flag, so its own `timeupdate` stop-detection in `exportVideoCard` never
+races with it), and a shared
 `requestAnimationFrame` loop (`ensurePreviewPlayLoop`) calls `renderAll()`
 at a throttled ~25fps for as long as any card's video is playing, since the
 normal debounced `scheduleRender()` path only redraws on input, not
@@ -177,15 +180,27 @@ Chrome/Edge can record MP4 directly today, Safari always could, browsers
 that can't fall back to WebM with no extra code path, and there's
 deliberately no ffmpeg.wasm or other muxer dependency to force MP4
 everywhere (would fight the single-file/no-dependency architecture for a
-multi-MB WASM payload). The canvas stream is video-only by construction, so
-audio is tapped separately straight off the source: `video.captureStream()`
-(or `.mozCaptureStream()`) is called on the same `<video>` used as the
-render source, and its audio track(s) — real audio comes through even
-though the element is always `.muted` for local playback, since muting only
-silences the output sink, not the underlying decoded stream — are merged
-into a combined `MediaStream` with the canvas's video track before it's
-handed to `MediaRecorder`. No Web Audio graph needed for this; that would
-only matter for mixing/volume control, not just passing audio through.
+multi-MB WASM payload; Firefox has no MediaRecorder MP4 support at all as of
+this writing, so it's the one browser that still gets WebM even though the
+fallback list would happily hand it MP4 if `isTypeSupported()` ever said
+yes). The canvas stream is video-only by construction, so audio is tapped
+separately straight off the source: `video.captureStream()` (or
+`.mozCaptureStream()`) is called on the same `<video>` used as the render
+source, and its audio track(s) are merged into a combined `MediaStream`
+with the canvas's video track before it's handed to `MediaRecorder`. No Web
+Audio graph needed for this; that would only matter for mixing/volume
+control, not just passing audio through. The video element is *not*
+`.muted` by default any more (it was, back when export was silent and
+muting kept preview/export behavior visually consistent) — `fileToVideo()`
+leaves it unmuted so the preview ("▶" on the card, "▶ Просмотр" in the trim
+modal) is actually audible, and `exportVideoCard` mutes it only for the
+duration of its own recording (saves/restores `video.muted` around the
+`await seekTo`/`recorder.start()`/`recorder.stop()` span) purely so a
+several-video export doesn't blast every clip's audio out the speakers at
+once — this local mute has no effect on `captureStream()`'s audio track,
+which carries the real decoded audio regardless (muting silences the
+output sink, not the underlying stream; verified against a real decoded
+recording, not from spec reading alone).
 `VIDEO_EXPORT_CANDIDATES_WITH_AUDIO` (picked over the video-only list
 whenever `getAudioTracks()` returns anything) drops the explicit codec
 string for MP4 down to bare `video/mp4` — `MediaRecorder.isTypeSupported()`
@@ -200,6 +215,35 @@ by the same `timeupdate` listener that detects the trim end) feeds
 `updateExportProgress()`, which drives the thin bar under the Export button
 (`#exportProgress`/`#exportProgressBar`) — each card is an equal share of
 the bar, and a video card's share fills gradually instead of jumping.
+
+`exportAll` no longer processes cards with a single `for` loop: photo cards
+all render concurrently via `Promise.all` (cheap, no reason to serialize),
+and video cards run through a small worker-pool (`VIDEO_EXPORT_CONCURRENCY`
+workers each pulling the next unprocessed video index off a shared
+`cursor`) instead of one `exportVideoCard` at a time. This matters because
+video export is real-time-bound — recording an 8s clip takes ≥8s no matter
+what — so the only way to cut a multi-video carousel's total export time is
+to have several recordings in flight at once instead of summing their
+durations; wall-clock time for N video cards tends toward
+`ceil(N / VIDEO_EXPORT_CONCURRENCY) × (longest clip in that batch)` rather
+than the sum of all of them. `VIDEO_EXPORT_CONCURRENCY` is derived from
+`navigator.hardwareConcurrency`, clamped to [2, 4] — deliberately not
+unbounded, since each concurrent recording is its own canvas +
+`MediaRecorder` + rAF loop, and letting a carousel with a dozen video cards
+launch a dozen simultaneous encoders is more likely to drop frames or
+exhaust memory than to finish faster. This is safe to parallelize because
+`exportVideoCard` is fully self-contained per call — its own `canvas`,
+`ctx`, `recorder`, and closures, operating on a distinct card object and a
+distinct `<video>` element per card (every video card always has its own
+element; see `cloneMediaForDuplicate` above) — the only things read across
+calls (`currentAssets()`, `currentGradient()`, `state.format`,
+`state.exportScale`) are effectively read-only for the duration of an
+export. `slots`/`progress` are indexed by the card's position in the
+export list so results and per-card progress land in the right place
+regardless of which job (photo or video) finishes first; `rendered` (the
+final `{name, blob}` list used for ZIP/download) is `slots.filter(Boolean)`
+built only after every job in both groups has settled.
+
 `copyCurrent()`/`sendToTelegram()` were deliberately left photo-only in
 behavior — for a video card they fall back to snapshotting the current
 frame, not the full clip. Videos are never explicitly
