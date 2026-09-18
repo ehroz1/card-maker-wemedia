@@ -142,16 +142,51 @@ copies) without any new persistence machinery. Because a `<video>` element
 has a single shared `currentTime`, `duplicateCard` cannot share a video
 reference the way it safely shares an `Image` between two card keys — it
 goes through `cloneMediaForDuplicate()` to create an independent `<video>`
-on the same source URL, which is why `duplicateCard` is `async`. Export asks
-the user for a trim range per video card (`askVideoTrim`, a modal built like
-`#helpModal`) immediately before the export loop runs, then
-`exportVideoCard` re-draws `renderCard()` on every `requestAnimationFrame`
-while the source video plays through the trim window, captured via
-`canvas.captureStream()` + `MediaRecorder` into a WEBM blob — deliberately
-silent (no audio track): muxing audio and video client-side was judged too
-fragile for this pass. `copyCurrent()`/`sendToTelegram()` were deliberately
-left photo-only in behavior — for a video card they fall back to snapshotting
-the current frame, not the full clip. Videos are never explicitly
+on the same source URL, which is why `duplicateCard` is `async`. Trim is
+asked immediately on upload — `setPhoto` awaits `askVideoTrim([{card, index}])`
+right after a video resolves — rather than gating export; the same modal
+reopens any time via the "✂" button `buildPreviews()` adds to video-card
+frames (`.edit-trim`), so export itself (`exportAll`) no longer blocks on a
+trim prompt, it just reads whatever is currently on `video.trimStart`/
+`trimEnd`. Inside `askVideoTrim`, the scrubber (`.vt-scrubber`, two
+pointer-dragged `.vt-handle`s) and the numeric fields write straight to
+`video.trimStart`/`trimEnd` as the user interacts — no separate draft state —
+so the modal's own "▶ Просмотр" preview always plays exactly what would be
+exported; a snapshot of the original values taken at open time is restored
+on Cancel. The same live `<video>` element is reparented into the modal
+(`videoWrap.appendChild(video)`) while open and detached again on close
+(`video.remove()`) rather than duplicating the source, since it's otherwise
+never in the DOM (only ever a `ctx.drawImage()` source). Playing a video's
+preview in its card thumbnail (the "▶" button `buildPreviews()` also adds)
+works the same way at a smaller scale: `toggleVideoPreviewPlayback` sets
+`video._previewPlaying` and calls `.play()`, a `timeupdate` listener
+installed once in `fileToVideo()` loops `currentTime` back to `trimStart`
+whenever playback reaches `trimEnd` (only while `_previewPlaying` is true —
+export doesn't set that flag, so its own `timeupdate` stop-detection in
+`exportVideoCard` never races with it), and a shared
+`requestAnimationFrame` loop (`ensurePreviewPlayLoop`) calls `renderAll()`
+at a throttled ~25fps for as long as any card's video is playing, since the
+normal debounced `scheduleRender()` path only redraws on input, not
+continuously. `exportAll` calls `stopAllVideoPreviews()` first to guarantee
+no preview loop is fighting a video mid-export. `exportVideoCard` re-draws
+`renderCard()` on every `requestAnimationFrame` while the source video plays
+through the trim window, captured via `canvas.captureStream()` +
+`MediaRecorder`; `VIDEO_EXPORT_CANDIDATES` tries `video/mp4` variants before
+falling back to `video/webm` ones via `MediaRecorder.isTypeSupported()` —
+Chrome/Edge can record MP4 directly today, Safari always could, browsers
+that can't fall back to WebM with no extra code path, and there's
+deliberately no ffmpeg.wasm or other muxer dependency to force MP4
+everywhere (would fight the single-file/no-dependency architecture for a
+multi-MB WASM payload). Recording is always silent (no audio track): muxing
+audio and video client-side was judged too fragile for this pass. An
+`onProgress(fraction)` callback threaded through `exportVideoCard` (driven
+by the same `timeupdate` listener that detects the trim end) feeds
+`updateExportProgress()`, which drives the thin bar under the Export button
+(`#exportProgress`/`#exportProgressBar`) — each card is an equal share of
+the bar, and a video card's share fills gradually instead of jumping.
+`copyCurrent()`/`sendToTelegram()` were deliberately left photo-only in
+behavior — for a video card they fall back to snapshotting the current
+frame, not the full clip. Videos are never explicitly
 `URL.revokeObjectURL()`-ed, matching the existing precedent of never
 disposing photo `Image` objects (both can still be reachable from the undo
 stack).
@@ -185,5 +220,6 @@ letter-spacing falls back to manual per-character drawing when
 `ctx.letterSpacing` is unsupported; missing `ResizeObserver`/clipboard API must
 degrade gracefully rather than break the page; `localStorage` may be unavailable
 in private browsing; video export feature-detects `MediaRecorder.isTypeSupported()`
-(vp9 → vp8 → plain webm) and fails with a clear message rather than a crash
-if none is supported, without blocking export of the remaining photo cards.
+across `VIDEO_EXPORT_CANDIDATES` (mp4 variants, then vp9 → vp8 → plain webm)
+and fails with a clear message rather than a crash if none is supported,
+without blocking export of the remaining photo cards.

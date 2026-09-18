@@ -187,6 +187,9 @@ __CSS__
         <button class="btn-green" id="btnExportMain" type="button">Export</button>
       </div>
 
+      <div class="export-progress" id="exportProgress" hidden>
+        <div class="export-progress-bar" id="exportProgressBar"></div>
+      </div>
       <p class="tools-status" id="status"></p>
     </div>
   </section>
@@ -229,11 +232,11 @@ __CSS__
   </div>
 </div>
 
-<div class="modal" id="videoTrimModal" role="dialog" aria-modal="true" aria-label="Обрезка видео перед экспортом" hidden>
+<div class="modal" id="videoTrimModal" role="dialog" aria-modal="true" aria-label="Обрезка видео" hidden>
   <div class="modal-card">
     <div class="modal-body">
-      <h2>Обрезка видео</h2>
-      <p>Для каждого видео на карточке укажи начало и конец нужного фрагмента, в секундах.</p>
+      <h2 id="videoTrimTitle">Обрезка видео</h2>
+      <p id="videoTrimHint">Для каждого видео на карточке укажи начало и конец нужного фрагмента, в секундах.</p>
       <div id="videoTrimBody"></div>
       <div class="video-trim-actions">
         <button type="button" class="btn-ghost" id="videoTrimCancel">Отмена</button>

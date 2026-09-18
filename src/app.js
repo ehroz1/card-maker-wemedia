@@ -58,7 +58,7 @@ const state = {
 const el = {};
 ['previews', 'coverTitle', 'coverBody', 'coverTitleSize', 'coverBodySize', 'cardsText',
  'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
- 'status', 'menu', 'filePicker', 'assetPicker',
+ 'status', 'menu', 'filePicker', 'assetPicker', 'exportProgress', 'exportProgressBar',
  'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale', 'exportZip',
  'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut',
  'chkGrayscale', 'rngBrightness', 'rngContrast', 'brightnessOut', 'contrastOut']
@@ -582,6 +582,38 @@ function buildPreviews() {
       frame.appendChild(selectBadge);
     }
 
+    // кнопки видео — сама видимость переключается классом .has-video
+    // в renderAll() (появляется/пропадает по факту, что сейчас лежит в card.img)
+    const playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'play-video';
+    playBtn.textContent = '▶';
+    playBtn.title = 'Проиграть/остановить предпросмотр видео';
+    playBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    playBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      toggleVideoPreviewPlayback(i);
+    });
+    frame.appendChild(playBtn);
+
+    const trimBtn = document.createElement('button');
+    trimBtn.type = 'button';
+    trimBtn.className = 'edit-trim';
+    trimBtn.textContent = '✂';
+    trimBtn.title = 'Изменить обрезку видео';
+    trimBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    trimBtn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const card = allCards()[i];
+      if (!card || !(card.img instanceof HTMLVideoElement)) return;
+      await askVideoTrim([{ card, index: i }], {
+        title: 'Обрезка видео',
+        hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте.',
+        confirmLabel: 'Готово',
+      });
+    });
+    frame.appendChild(trimBtn);
+
     attachFrameEvents(frame, i);
     item.appendChild(frame);
     el.previews.appendChild(item);
@@ -880,6 +912,18 @@ function fileToVideo(file) {
       () => finish(reject, new Error('видео долго не загружается — возможно, браузер не поддерживает его формат')),
       20000
     );
+    // проигрывание превью (кнопка на карточке, просмотр в окне обрезки —
+    // см. video._previewPlaying) зациклено внутри выбранного промежутка,
+    // а не всего ролика; на экспорт не влияет — там свой отдельный слушатель
+    // timeupdate в exportVideoCard, и стоп-старт этой петли перед экспортом
+    // выключается через stopAllVideoPreviews()
+    video.addEventListener('timeupdate', () => {
+      if (!video._previewPlaying) return;
+      const end = video.trimEnd ?? video.duration;
+      if (isFinite(end) && video.currentTime >= end - 0.02) {
+        video.currentTime = video.trimStart || 0;
+      }
+    });
     video.src = URL.createObjectURL(file);
   });
 }
@@ -906,6 +950,19 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
     selectCard(index);
     scheduleRender();
     say(media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено');
+    if (media instanceof HTMLVideoElement) {
+      // спрашиваем обрезку сразу при загрузке, а не откладываем до экспорта —
+      // «Отмена» тут просто оставляет ролик целиком (обрезка по умолчанию),
+      // а не отменяет саму загрузку видео
+      const card = allCards()[index];
+      if (card) {
+        await askVideoTrim([{ card, index }], {
+          title: 'Обрезка видео',
+          hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте. Потом это можно поменять кнопкой «✂» на превью.',
+          confirmLabel: 'Готово',
+        });
+      }
+    }
   } catch (err) {
     say('Не получилось открыть файл: ' + err.message);
   }
@@ -983,6 +1040,15 @@ function renderAll() {
       (card.kind === 'cover' ? (card.title || card.body) : card.lines.some(l => l.trim()));
     empty.style.display = hasContent ? 'none' : 'grid';
     frame.classList.toggle('has-photo', hasPhoto);
+    const isVideo = hasPhoto && card.img instanceof HTMLVideoElement;
+    frame.classList.toggle('has-video', isVideo);
+    if (isVideo) {
+      // глиф play/pause синхронизируем тут же, а не только в момент клика —
+      // buildPreviews() пересобирает разметку карточек на каждую правку текста
+      // и сбросил бы кнопку в «▶», пока видео на самом деле всё ещё играет
+      const playBtn = frame.querySelector('.play-video');
+      if (playBtn) playBtn.textContent = card.img.paused ? '▶' : '⏸';
+    }
 
     canvas.width = Math.round(W * scale);
     canvas.height = Math.round(H * scale);
@@ -1010,6 +1076,68 @@ function renderFull(card, scale = state.exportScale) {
   return canvas;
 }
 
+/* ------------------------------------------------------ превью видео play */
+
+/*
+ * Кнопка «▶» на карточке с видео проигрывает именно обрезанный фрагмент
+ * (video.trimStart..trimEnd) в зацикленном режиме прямо в превью — не сырое
+ * видео целиком. Пока хоть одно видео играет, renderAll() гонится в цикле
+ * requestAnimationFrame (не через обычный debounce scheduleRender), чтобы
+ * движение было видно в канвасе; как только все видео на паузе, цикл сам
+ * останавливается.
+ */
+let previewPlayRaf = null;
+let previewPlayLastTs = 0;
+function ensurePreviewPlayLoop() {
+  if (previewPlayRaf) return;
+  const tick = ts => {
+    const anyPlaying = allCards().some(c =>
+      c.img instanceof HTMLVideoElement && c.img._previewPlaying && !c.img.paused);
+    if (!anyPlaying) { previewPlayRaf = null; return; }
+    if (ts - previewPlayLastTs >= 40) {   // ~25 кадров/с — превью, не нужно 60
+      previewPlayLastTs = ts;
+      renderAll();
+    }
+    previewPlayRaf = requestAnimationFrame(tick);
+  };
+  previewPlayRaf = requestAnimationFrame(tick);
+}
+
+function toggleVideoPreviewPlayback(index) {
+  const card = allCards()[index];
+  if (!card || !(card.img instanceof HTMLVideoElement)) return;
+  const video = card.img;
+  const frame = el.previews.querySelector(`.frame[data-index="${index}"]`);
+  const btn = frame && frame.querySelector('.play-video');
+  if (video.paused) {
+    const start = video.trimStart || 0;
+    const end = video.trimEnd ?? video.duration;
+    if (video.currentTime < start || video.currentTime >= end) video.currentTime = start;
+    video._previewPlaying = true;
+    video.play().then(() => {
+      if (btn) btn.textContent = '⏸';
+      ensurePreviewPlayLoop();
+    }).catch(() => say('Не получилось запустить предпросмотр видео'));
+  } else {
+    video._previewPlaying = false;
+    video.pause();
+    if (btn) btn.textContent = '▶';
+  }
+}
+
+/* Останавливает все проигрываемые превью — перед экспортом, чтобы петля
+   предпросмотра не соревновалась со слушателем timeupdate в exportVideoCard. */
+function stopAllVideoPreviews() {
+  allCards().forEach((card, i) => {
+    if (!(card.img instanceof HTMLVideoElement)) return;
+    card.img._previewPlaying = false;
+    card.img.pause();
+    const frame = el.previews.querySelector(`.frame[data-index="${i}"]`);
+    const btn = frame && frame.querySelector('.play-video');
+    if (btn) btn.textContent = '▶';
+  });
+}
+
 /* -------------------------------------------------------------- экспорт */
 
 function canvasToBlob(canvas, type, quality) {
@@ -1029,6 +1157,20 @@ function downloadBlob(blob, name) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+/* Полоска прогресса под кнопкой Export — общая доля готовых карточек, плюс
+   для видео (единственного, что реально занимает время) — доля записанного
+   внутри его собственной доли. */
+function showExportProgress() {
+  el.exportProgress.hidden = false;
+  updateExportProgress(0);
+}
+function updateExportProgress(frac) {
+  el.exportProgressBar.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%';
+}
+function hideExportProgress() {
+  el.exportProgress.hidden = true;
 }
 
 /*
@@ -1131,24 +1273,43 @@ function seekTo(video, t) {
 }
 
 /*
- * Пишет обрезанный фрагмент видео карточки в WebM: тот же renderCard(), что
- * рисует статичные карточки, вызывается на каждом кадре, пока видео играет
- * от video.trimStart до video.trimEnd, — так текст, лого и градиент горят
+ * Кандидаты MediaRecorder в порядке предпочтения: настоящий MP4 первым (его
+ * поддерживает Safari — MediaRecorder может писать video/mp4 с 14.1), иначе
+ * откат на WebM (Chrome/Firefox не умеют писать MP4 через MediaRecorder без
+ * стороннего кодировщика вроде ffmpeg.wasm — а тянуть в проект тяжёлую
+ * WASM-библиотеку ради этого значит нарушить принцип «один файл, без
+ * зависимостей», см. CLAUDE.md). Так что MP4 — там, где браузер даёт его
+ * нативно, WebM — везде остальном, без исключений.
+ */
+const VIDEO_EXPORT_CANDIDATES = [
+  { mime: 'video/mp4;codecs=avc1.42E01E', ext: 'mp4' },
+  { mime: 'video/mp4;codecs=h264', ext: 'mp4' },
+  { mime: 'video/mp4', ext: 'mp4' },
+  { mime: 'video/webm;codecs=vp9', ext: 'webm' },
+  { mime: 'video/webm;codecs=vp8', ext: 'webm' },
+  { mime: 'video/webm', ext: 'webm' },
+];
+
+/*
+ * Пишет обрезанный фрагмент видео карточки: тот же renderCard(), что рисует
+ * статичные карточки, вызывается на каждом кадре, пока видео играет от
+ * video.trimStart до video.trimEnd, — так текст, лого и градиент горят
  * поверх картинки кадр за кадром так же, как на фото-экспорте, просто не
  * за один снимок, а живой записью canvas.captureStream() через
  * MediaRecorder. Пишет без звука — это единственное отличие от полноценного
  * видео-экспорта (см. README «Совместимость»), склейка звука через
- * Web Audio — за рамками этой версии.
+ * Web Audio — за рамками этой версии. onProgress(0..1), если передан,
+ * получает долю уже записанного фрагмента — для полоски прогресса.
  */
-async function exportVideoCard(card, index) {
+async function exportVideoCard(card, index, onProgress) {
   if (!HTMLCanvasElement.prototype.captureStream || !window.MediaRecorder) {
     throw new Error('браузер не умеет записывать видео с canvas');
   }
-  const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
-    .find(t => MediaRecorder.isTypeSupported(t));
-  if (!mimeType) throw new Error('браузер не поддерживает запись WebM');
+  const picked = VIDEO_EXPORT_CANDIDATES.find(c => MediaRecorder.isTypeSupported(c.mime));
+  if (!picked) throw new Error('браузер не поддерживает запись видео');
 
   const video = card.img;
+  video._previewPlaying = false;   // на случай, если играл предпросмотр именно этой карточки
   const [W, H] = FORMATS[state.format];
   const scale = state.exportScale;
   const canvas = document.createElement('canvas');
@@ -1166,11 +1327,11 @@ async function exportVideoCard(card, index) {
   video.muted = true;
   await seekTo(video, start);
 
-  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType, videoBitsPerSecond: 8_000_000 });
+  const recorder = new MediaRecorder(canvas.captureStream(30), { mimeType: picked.mime, videoBitsPerSecond: 8_000_000 });
   const chunks = [];
   recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
-  return await new Promise((resolve, reject) => {
+  const blob = await new Promise((resolve, reject) => {
     let raf = null;
     const hardStopAt = performance.now() + 5 * 60 * 1000;   // защита от зависания на странных файлах
     const stop = () => {
@@ -1179,7 +1340,10 @@ async function exportVideoCard(card, index) {
       video.pause();
       if (recorder.state !== 'inactive') recorder.stop();
     };
-    const onTick = () => { if (video.currentTime >= end) stop(); };
+    const onTick = () => {
+      if (onProgress) onProgress(Math.max(0, Math.min(1, (video.currentTime - start) / (end - start))));
+      if (video.currentTime >= end) stop();
+    };
     const draw = () => {
       try { renderCard(ctx, card, [W, H], assets, gradient); } catch { /* попробуем на следующем кадре */ }
       if (video.currentTime >= end || video.ended || performance.now() > hardStopAt) { stop(); return; }
@@ -1187,13 +1351,15 @@ async function exportVideoCard(card, index) {
     };
     recorder.onstop = () => {
       video.muted = wasMuted;
-      resolve(new Blob(chunks, { type: 'video/webm' }));
+      if (onProgress) onProgress(1);
+      resolve(new Blob(chunks, { type: picked.mime.split(';')[0] }));
     };
     recorder.onerror = e => { video.muted = wasMuted; reject(e.error || new Error('ошибка записи видео')); };
     video.addEventListener('timeupdate', onTick);
     recorder.start();
     video.play().then(() => { raf = requestAnimationFrame(draw); }).catch(reject);
   });
+  return { blob, ext: picked.ext };
 }
 
 function formatSeconds(s) {
@@ -1202,21 +1368,38 @@ function formatSeconds(s) {
 }
 
 /*
- * Перед экспортом, если среди карточек есть видео, спрашивает, какой
- * промежуток каждого ролика обрезать (по умолчанию — весь ролик или то,
- * что выбрали в прошлый раз). Возвращает true, если можно экспортировать,
- * false — если отменили. Значения пишутся сразу в video.trimStart/trimEnd,
- * поэтому следующий экспорт откроется с уже выбранным промежутком.
+ * Окно обрезки видео — общее и для «спросить сразу при загрузке» (см.
+ * setPhoto), и для кнопки «✂» на превью (переоткрыть в любой момент), и для
+ * пачки видео разом (сейчас нигде не используется как обязательный шаг перед
+ * экспортом — экспорт просто берёт то, что уже лежит в video.trimStart/
+ * trimEnd). Значения меняются «вживую»: перетаскивание ползунков и правка
+ * полей сразу пишут в video.trimStart/trimEnd (а не в черновик), поэтому
+ * кнопка «Просмотр» в самом окне сразу проигрывает то, что реально выберется.
+ * Оригинальные значения запоминаются на случай «Отмена» — тогда откатываем
+ * их обратно. Возвращает true при «Готово/Экспортировать», false при отмене.
  */
-function askVideoTrim(videoCards) {
+function askVideoTrim(videoCards, opts = {}) {
+  const {
+    title = 'Обрезка видео',
+    hint = 'Для каждого видео на карточке укажи начало и конец нужного фрагмента.',
+    confirmLabel = 'Готово',
+  } = opts;
   return new Promise(resolve => {
     const modal = document.getElementById('videoTrimModal');
     const body = document.getElementById('videoTrimBody');
+    const cancelBtn = document.getElementById('videoTrimCancel');
+    const confirmBtn = document.getElementById('videoTrimConfirm');
+    document.getElementById('videoTrimTitle').textContent = title;
+    document.getElementById('videoTrimHint').textContent = hint;
+    confirmBtn.textContent = confirmLabel;
     body.innerHTML = '';
 
     videoCards.forEach(({ card, index }) => {
       const video = card.img;
       const duration = video.durationUnknown ? 60 : (video.duration || 0);
+      const originalStart = video.trimStart || 0;
+      const originalEnd = video.trimEnd ?? duration;
+
       const row = document.createElement('div');
       row.className = 'video-trim-row';
 
@@ -1226,12 +1409,30 @@ function askVideoTrim(videoCards) {
         (video.durationUnknown ? ' — длительность не определилась, показана минута' : ' — ' + formatSeconds(duration));
       row.appendChild(label);
 
+      const videoWrap = document.createElement('div');
+      videoWrap.className = 'vt-video-wrap';
+      video.controls = false;
+      videoWrap.appendChild(video);   // тот же элемент, что рисуется на канвасе — просто временно виден
+      row.appendChild(videoWrap);
+
+      const scrubber = document.createElement('div');
+      scrubber.className = 'vt-scrubber';
+      const fill = document.createElement('div'); fill.className = 'vt-fill';
+      const startHandle = document.createElement('button');
+      startHandle.type = 'button'; startHandle.className = 'vt-handle vt-handle-start';
+      startHandle.setAttribute('aria-label', 'Начало фрагмента');
+      const endHandle = document.createElement('button');
+      endHandle.type = 'button'; endHandle.className = 'vt-handle vt-handle-end';
+      endHandle.setAttribute('aria-label', 'Конец фрагмента');
+      scrubber.append(fill, startHandle, endHandle);
+      row.appendChild(scrubber);
+
       const fields = document.createElement('div');
-      fields.className = 'control-row';
-      const makeField = (title, value) => {
+      fields.className = 'control-row vt-fields';
+      const makeField = (title2, value) => {
         const wrap = document.createElement('label');
         wrap.className = 'control';
-        wrap.title = title;
+        wrap.title = title2;
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
@@ -1242,11 +1443,83 @@ function askVideoTrim(videoCards) {
         fields.appendChild(wrap);
         return input;
       };
-      const startInput = makeField('Начало, сек', Math.min(video.trimStart || 0, duration));
-      const endInput = makeField('Конец, сек', Math.min(video.trimEnd ?? duration, duration));
+      const startInput = makeField('Начало, сек', originalStart);
+      const endInput = makeField('Конец, сек', originalEnd);
+
+      const previewBtn = document.createElement('button');
+      previewBtn.type = 'button';
+      previewBtn.className = 'btn-ghost vt-preview-btn';
+      previewBtn.textContent = '▶ Просмотр';
+      fields.appendChild(previewBtn);
       row.appendChild(fields);
       body.appendChild(row);
-      row._inputs = { video, startInput, endInput, duration };
+
+      const pct = t => duration > 0 ? Math.max(0, Math.min(100, (t / duration) * 100)) : 0;
+      const layout = () => {
+        fill.style.left = pct(video.trimStart) + '%';
+        fill.style.right = (100 - pct(video.trimEnd)) + '%';
+        startHandle.style.left = pct(video.trimStart) + '%';
+        endHandle.style.left = pct(video.trimEnd) + '%';
+      };
+      const setStart = t => {
+        t = Math.max(0, Math.min(t, video.trimEnd - 0.1));
+        video.trimStart = Math.round(t * 10) / 10;
+        startInput.value = String(video.trimStart);
+        layout();
+      };
+      const setEnd = t => {
+        t = Math.min(duration, Math.max(t, video.trimStart + 0.1));
+        video.trimEnd = Math.round(t * 10) / 10;
+        endInput.value = String(video.trimEnd);
+        layout();
+      };
+      layout();
+
+      const wireDrag = (handle, isStart) => {
+        handle.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          const onMove = ev => {
+            const rect = scrubber.getBoundingClientRect();
+            const frac = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+            const t = frac * duration;
+            if (isStart) setStart(t); else setEnd(t);
+            video.currentTime = isStart ? video.trimStart : video.trimEnd;
+          };
+          const onUp = () => {
+            handle.removeEventListener('pointermove', onMove);
+            handle.removeEventListener('pointerup', onUp);
+          };
+          handle.addEventListener('pointermove', onMove);
+          handle.addEventListener('pointerup', onUp);
+        });
+      };
+      wireDrag(startHandle, true);
+      wireDrag(endHandle, false);
+
+      startInput.addEventListener('input', () => {
+        setStart(Number(startInput.value) || 0);
+        video.currentTime = video.trimStart;
+      });
+      endInput.addEventListener('input', () => {
+        setEnd(Number(endInput.value) || duration);
+        video.currentTime = video.trimEnd;
+      });
+
+      previewBtn.addEventListener('click', () => {
+        if (video.paused) {
+          video._previewPlaying = true;
+          video.currentTime = video.trimStart;
+          video.play().then(() => { previewBtn.textContent = '⏸ Стоп'; })
+            .catch(() => say('Не получилось запустить просмотр'));
+        } else {
+          video._previewPlaying = false;
+          video.pause();
+          previewBtn.textContent = '▶ Просмотр';
+        }
+      });
+
+      row._data = { video, originalStart, originalEnd };
     });
 
     const finish = ok => {
@@ -1254,23 +1527,20 @@ function askVideoTrim(videoCards) {
       cancelBtn.removeEventListener('click', onCancel);
       confirmBtn.removeEventListener('click', onConfirm);
       modal.removeEventListener('click', onBackdrop);
-      if (ok) {
-        [...body.children].forEach(row => {
-          const { video, startInput, endInput, duration } = row._inputs;
-          const start = Math.max(0, Math.min(Number(startInput.value) || 0, duration));
-          const end = Math.max(start + 0.1, Math.min(Number(endInput.value) || duration, duration));
-          video.trimStart = start;
-          video.trimEnd = end;
-        });
-      }
+      [...body.children].forEach(row => {
+        const { video, originalStart, originalEnd } = row._data;
+        video._previewPlaying = false;
+        video.pause();
+        video.remove();   // возвращаем элемент в закадровое состояние — он и так рисуется в канвас превью
+        if (!ok) { video.trimStart = originalStart; video.trimEnd = originalEnd; }
+      });
+      scheduleRender();
       resolve(ok);
     };
     const onCancel = () => finish(false);
     const onConfirm = () => finish(true);
     const onBackdrop = e => { if (e.target === modal) finish(false); };
 
-    const cancelBtn = document.getElementById('videoTrimCancel');
-    const confirmBtn = document.getElementById('videoTrimConfirm');
     cancelBtn.addEventListener('click', onCancel);
     confirmBtn.addEventListener('click', onConfirm);
     modal.addEventListener('click', onBackdrop);
@@ -1278,42 +1548,52 @@ function askVideoTrim(videoCards) {
   });
 }
 
+/*
+ * Обрезка видео к этому моменту уже выбрана заранее (спрашивается сразу
+ * при загрузке — см. setPhoto, и её можно поменять кнопкой «✂» на превью
+ * в любой момент), поэтому сам экспорт больше не прерывается модалкой —
+ * просто использует то, что лежит в video.trimStart/trimEnd на каждой
+ * карточке. Полоска прогресса — общая доля готовых карточек; фото готовятся
+ * мгновенно, видео пишутся в реальном времени, поэтому именно видео двигает
+ * полоску плавно внутри своей доли (см. onProgress в exportVideoCard).
+ */
 async function exportAll() {
   const list = allCards().filter(hasContent);
   if (!list.length) { say('Пока нечего экспортировать'); return; }
 
-  const videoCards = list
-    .map((card, index) => ({ card, index }))
-    .filter(({ card }) => card.img instanceof HTMLVideoElement);
-  if (videoCards.length) {
-    const proceed = await askVideoTrim(videoCards);
-    if (!proceed) { say('Экспорт отменён'); return; }
-  }
+  stopAllVideoPreviews();   // иначе петля предпросмотра будет мешать записи
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
-  const ext = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
+  const photoExt = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
   const rendered = [];
   let failed = 0;
+  showExportProgress();
 
   for (let i = 0; i < list.length; i++) {
     const card = list[i];
     const isVideo = card.img instanceof HTMLVideoElement;
-    const name = (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') +
-      '.' + (isVideo ? 'webm' : ext);
-    let blob = null;
+    const baseFrac = i / list.length;
+    const step = 1 / list.length;
+    updateExportProgress(baseFrac);
+    let blob = null, ext = photoExt;
     try {
       if (isVideo) {
         say(`Записываю видео — карточка ${i === 0 ? 'обложка' : i}…`);
-        blob = await exportVideoCard(card, i);
+        const result = await exportVideoCard(card, i, p => updateExportProgress(baseFrac + p * step));
+        blob = result.blob; ext = result.ext;
       } else {
         blob = await canvasToBlob(renderFull(card), mime, 0.95);
       }
     } catch (err) {
       console.error('не удалось подготовить карточку для экспорта', i, err);
     }
+    updateExportProgress((i + 1) / list.length);
     if (!blob) { failed++; continue; }
+    const name = (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') +
+      '.' + ext;
     rendered.push({ name, blob });
   }
+  hideExportProgress();
   if (!rendered.length) { say('Не удалось подготовить файлы'); return; }
 
   if (state.exportZip) {
@@ -1702,11 +1982,13 @@ const HELP = [
    'применяются и к фото, и к видео выбранной карточки.'],
   ['Видео на карточке',
    'Работает как фото: та же вставка, то же масштабирование, сдвиг, поворот, ' +
-   'чёрно-белое, яркость и контраст. Перед экспортом появится окно «Обрезка ' +
-   'видео» — для каждой карточки с видео укажи начало и конец нужного ' +
-   'фрагмента в секундах, остальное обрежется. Экспортируется как WEBM ' +
-   'без звука — обработка полностью локальная, в браузере, без отправки ' +
-   'файлов куда-либо.'],
+   'чёрно-белое, яркость и контраст. Сразу после загрузки открывается окно ' +
+   '«Обрезка видео» — на видео-превью тяни зелёные ползунки или впиши начало ' +
+   'и конец в секундах, кнопка «▶ Просмотр» проигрывает именно выбранный ' +
+   'кусок. Значок «✂» в углу превью карточки открывает это окно заново в любой ' +
+   'момент. Кнопка «▶» по центру превью проигрывает обрезанный фрагмент ' +
+   'прямо в карточке (в превью, без звука — так же, как и в самом экспорте). ' +
+   'Обработка полностью локальная, в браузере, без отправки файлов куда-либо.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -1733,11 +2015,14 @@ const HELP = [
   ['Экспорт',
    'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
    'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей; ' +
-   'карточки с видео экспортируются в WEBM независимо от выбранного формата. ' +
-   'Галочка «Одним ZIP-архивом» — вместо файла за файлом скачивается один ' +
-   'архив со всеми карточками. Кнопка с самолётиком отдаёт карточки ' +
-   'в системное окно «Поделиться», откуда их можно отправить в Telegram — ' +
-   'для видео при этом отправится один кадр, а не сам ролик. ' +
+   'карточки с видео экспортируются в MP4, если браузер умеет его писать ' +
+   '(например Chrome), иначе — в WEBM без звука. Обрезка на экспорт не ' +
+   'спрашивается — берётся то, что уже выбрано в окне «Обрезка видео» ' +
+   '(см. «Видео на карточке»). Пока идёт экспорт, под кнопкой Export бежит ' +
+   'полоска прогресса. Галочка «Одним ZIP-архивом» — вместо файла за файлом ' +
+   'скачивается один архив со всеми карточками. Кнопка с самолётиком отдаёт ' +
+   'карточки в системное окно «Поделиться», откуда их можно отправить ' +
+   'в Telegram — для видео при этом отправится один кадр, а не сам ролик. ' +
    '⌘C копирует выбранную карточку в буфер обмена (тоже кадром для видео).'],
   ['Шаблоны',
    'Иконка с сеткой внизу — логотипы проекта и переключение между проектами. ' +
