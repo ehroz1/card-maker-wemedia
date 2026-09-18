@@ -820,6 +820,14 @@ function fileToVideo(file) {
     video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
+    let settled = false;
+    const finish = (fn, arg) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (fn === reject) URL.revokeObjectURL(video.src);
+      fn(arg);
+    };
     video.onloadedmetadata = () => {
       video.trimStart = 0;
       // изредка браузер не знает длительность заранее (не дошита обложка
@@ -827,8 +835,18 @@ function fileToVideo(file) {
       video.trimEnd = isFinite(video.duration) ? video.duration : 60;
       video.durationUnknown = !isFinite(video.duration);
     };
-    video.onloadeddata = () => resolve(video);
-    video.onerror = () => reject(new Error('не удалось прочитать видео'));
+    // canplay иногда срабатывает раньше loadeddata (и наоборот, в зависимости
+    // от браузера/кодека) — берём что подоспеет первым, лишь бы кадр был готов
+    video.onloadeddata = () => finish(resolve, video);
+    video.oncanplay = () => finish(resolve, video);
+    video.onerror = () => finish(reject, new Error('не удалось прочитать видео — неподдерживаемый формат или кодек'));
+    // некоторые кодеки (например HEVC/H.265 из iPhone) не дают ни одного из
+    // событий выше в браузерах без их поддержки — без таймаута файл бы завис
+    // молча, без ошибки и без результата
+    const timer = setTimeout(
+      () => finish(reject, new Error('видео долго не загружается — возможно, браузер не поддерживает его формат')),
+      20000
+    );
     video.src = URL.createObjectURL(file);
   });
 }
@@ -2192,7 +2210,7 @@ function wireEvents() {
   document.getElementById('helpModal').addEventListener('click', e => {
     if (e.target.id === 'helpModal') closeHelp();
   });
-  document.getElementById('btnSelect').addEventListener('click', () => {
+  document.getElementById('btnImport').addEventListener('click', () => {
     el.filePicker.value = '';
     el.filePicker.click();
   });
