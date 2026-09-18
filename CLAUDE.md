@@ -177,8 +177,24 @@ Chrome/Edge can record MP4 directly today, Safari always could, browsers
 that can't fall back to WebM with no extra code path, and there's
 deliberately no ffmpeg.wasm or other muxer dependency to force MP4
 everywhere (would fight the single-file/no-dependency architecture for a
-multi-MB WASM payload). Recording is always silent (no audio track): muxing
-audio and video client-side was judged too fragile for this pass. An
+multi-MB WASM payload). The canvas stream is video-only by construction, so
+audio is tapped separately straight off the source: `video.captureStream()`
+(or `.mozCaptureStream()`) is called on the same `<video>` used as the
+render source, and its audio track(s) — real audio comes through even
+though the element is always `.muted` for local playback, since muting only
+silences the output sink, not the underlying decoded stream — are merged
+into a combined `MediaStream` with the canvas's video track before it's
+handed to `MediaRecorder`. No Web Audio graph needed for this; that would
+only matter for mixing/volume control, not just passing audio through.
+`VIDEO_EXPORT_CANDIDATES_WITH_AUDIO` (picked over the video-only list
+whenever `getAudioTracks()` returns anything) drops the explicit codec
+string for MP4 down to bare `video/mp4` — `MediaRecorder.isTypeSupported()`
+rejects explicit AAC codec strings like `mp4a.40.2`/`aac` even where it
+accepts the unqualified MIME type, verified empirically, not from spec
+reading. If the browser has no `captureStream()` on `<video>` at all (older
+Safari) or the source clip has no audio track, export silently falls back
+to the video-only path exactly as before — no error, no user-visible
+difference beyond the exported file being silent. An
 `onProgress(fraction)` callback threaded through `exportVideoCard` (driven
 by the same `timeupdate` listener that detects the trim end) feeds
 `updateExportProgress()`, which drives the thin bar under the Export button
