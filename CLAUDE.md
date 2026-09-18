@@ -194,13 +194,29 @@ control, not just passing audio through. The video element is *not*
 muting kept preview/export behavior visually consistent) — `fileToVideo()`
 leaves it unmuted so the preview ("▶" on the card, "▶ Просмотр" in the trim
 modal) is actually audible, and `exportVideoCard` mutes it only for the
-duration of its own recording (saves/restores `video.muted` around the
-`await seekTo`/`recorder.start()`/`recorder.stop()` span) purely so a
+duration of its own recording (saves/restores `video.muted`) purely so a
 several-video export doesn't blast every clip's audio out the speakers at
-once — this local mute has no effect on `captureStream()`'s audio track,
-which carries the real decoded audio regardless (muting silences the
-output sink, not the underlying stream; verified against a real decoded
-recording, not from spec reading alone).
+once. In Chrome/Firefox this local mute has no effect on
+`captureStream()`'s audio track — verified against a real decoded
+recording — but it does in Safari: a user report showed Safari's exported
+MP4 silently losing audio while the same clip in Firefox (WebM) kept it,
+and the working theory (WebKit's media pipeline ties the captured track's
+content to presentation `.muted` state more tightly than Chromium's does)
+led to two order-of-operations fixes in `exportVideoCard`, both cheap and
+harmless in browsers that didn't need them: (1) `captureStream()`'s audio
+tracks are grabbed *before* `video.muted = true` runs, not after — the
+recorder is constructed once we already have the tracks, so the mute can
+no longer taint them; (2) the `<video>` element, which otherwise is never
+in the DOM at all outside the trim modal, is temporarily appended
+off-screen (`position: fixed; left: -9999px`, not `display: none` — some
+engines pause decoding for elements with no layout box at all) for the
+span of the recording and removed again in a `finally`, on a report that
+Safari's `captureStream()` is unreliable for audio on a detached element.
+Neither fix has been confirmed against real Safari (not available to test
+here) — if audio is still missing there after this, the mute-timing and
+DOM-attachment theories were wrong and the real cause needs revisiting
+with an actual WebKit build in hand, not more guessing from Chromium
+behavior.
 `VIDEO_EXPORT_CANDIDATES_WITH_AUDIO` (picked over the video-only list
 whenever `getAudioTracks()` returns anything) drops the explicit codec
 string for MP4 down to bare `video/mp4` — `MediaRecorder.isTypeSupported()`

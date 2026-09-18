@@ -3252,12 +3252,18 @@ const VIDEO_EXPORT_CANDIDATES_WITH_AUDIO = [
  * поверх картинки кадр за кадром так же, как на фото-экспорте, просто не
  * за один снимок, а живой записью canvas.captureStream() через
  * MediaRecorder. Звук берём не через Web Audio (сложнее и не нужно), а
- * напрямую с video.captureStream().getAudioTracks() — это отдаёт настоящую
- * звуковую дорожку источника, даже когда сам элемент video.muted (проверено:
- * muted глушит только вывод на колонки, а не сырой поток) — и добавляем её
- * к видео-дорожке с канваса в один MediaStream перед записью. Если у
- * браузера нет captureStream() на <video> (Safari до недавних версий) или
- * у ролика нет своей звуковой дорожки — пишем как раньше, без звука.
+ * напрямую с video.captureStream().getAudioTracks() и добавляем её к
+ * видео-дорожке с канваса в один MediaStream перед записью. Порядок здесь
+ * важен: дорожку берём ДО того, как приглушаем элемент для локального
+ * проигрывания — в Chrome/Firefox это не имело бы значения (там muted не
+ * трогает сырой поток), а в Safari звук в итоговом файле оказывался пустым
+ * именно из-за этого — WebKit, похоже, завязывает содержимое дорожки на
+ * состояние .muted в момент захвата, а не только на вывод в колонки.
+ * Элемент также на время записи временно вставляется в DOM (невидимо,
+ * off-screen) — по тем же причинам: как минимум в части версий Safari
+ * captureStream() ненадёжно отдаёт звук для элемента, ни разу не
+ * подключённого к документу. Если у браузера нет captureStream() на <video>
+ * или у ролика нет своей звуковой дорожки — пишем как раньше, без звука.
  * onProgress(0..1), если передан, получает долю уже записанного фрагмента —
  * для полоски прогресса.
  */
@@ -3281,59 +3287,76 @@ async function exportVideoCard(card, index, onProgress) {
   const start = Math.max(0, Math.min(video.trimStart || 0, duration));
   const end = Math.max(start + 0.1, Math.min(video.trimEnd ?? duration, duration));
 
-  const wasMuted = video.muted;
-  video.muted = true;
-  await seekTo(video, start);
-
-  const canvasStream = canvas.captureStream(30);
-  let audioTracks = [];
-  const captureAudio = video.captureStream || video.mozCaptureStream;
-  if (captureAudio) {
-    try { audioTracks = captureAudio.call(video).getAudioTracks(); }
-    catch { /* какой-то браузер отказал — просто пишем без звука */ }
+  // видео на этот момент точно отсоединено от DOM (оно там бывает только
+  // временно, внутри окна обрезки) — подключаем незаметно на время записи,
+  // см. комментарий к функции
+  const attachedHere = !video.isConnected;
+  if (attachedHere) {
+    video.style.position = 'fixed';
+    video.style.left = '-9999px';
+    video.style.width = '2px';
+    video.style.height = '2px';
+    document.body.appendChild(video);
   }
-  const hasAudio = audioTracks.length > 0;
-  const combinedStream = hasAudio
-    ? new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
-    : canvasStream;
 
-  const candidates = hasAudio ? VIDEO_EXPORT_CANDIDATES_WITH_AUDIO : VIDEO_EXPORT_CANDIDATES;
-  const picked = candidates.find(c => MediaRecorder.isTypeSupported(c.mime));
-  if (!picked) throw new Error('браузер не поддерживает запись видео');
+  try {
+    let audioTracks = [];
+    const captureAudio = video.captureStream || video.mozCaptureStream;
+    if (captureAudio) {
+      try { audioTracks = captureAudio.call(video).getAudioTracks(); }
+      catch { /* какой-то браузер отказал — просто пишем без звука */ }
+    }
+    const hasAudio = audioTracks.length > 0;
 
-  const recorder = new MediaRecorder(combinedStream, { mimeType: picked.mime, videoBitsPerSecond: 8_000_000 });
-  const chunks = [];
-  recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    const wasMuted = video.muted;
+    video.muted = true;   // дорожку уже взяли — теперь можно смело приглушить локальный вывод
+    await seekTo(video, start);
 
-  const blob = await new Promise((resolve, reject) => {
-    let raf = null;
-    const hardStopAt = performance.now() + 5 * 60 * 1000;   // защита от зависания на странных файлах
-    const stop = () => {
-      cancelAnimationFrame(raf);
-      video.removeEventListener('timeupdate', onTick);
-      video.pause();
-      if (recorder.state !== 'inactive') recorder.stop();
-    };
-    const onTick = () => {
-      if (onProgress) onProgress(Math.max(0, Math.min(1, (video.currentTime - start) / (end - start))));
-      if (video.currentTime >= end) stop();
-    };
-    const draw = () => {
-      try { renderCard(ctx, card, [W, H], assets, gradient); } catch { /* попробуем на следующем кадре */ }
-      if (video.currentTime >= end || video.ended || performance.now() > hardStopAt) { stop(); return; }
-      raf = requestAnimationFrame(draw);
-    };
-    recorder.onstop = () => {
-      video.muted = wasMuted;
-      if (onProgress) onProgress(1);
-      resolve(new Blob(chunks, { type: picked.mime.split(';')[0] }));
-    };
-    recorder.onerror = e => { video.muted = wasMuted; reject(e.error || new Error('ошибка записи видео')); };
-    video.addEventListener('timeupdate', onTick);
-    recorder.start();
-    video.play().then(() => { raf = requestAnimationFrame(draw); }).catch(reject);
-  });
-  return { blob, ext: picked.ext };
+    const canvasStream = canvas.captureStream(30);
+    const combinedStream = hasAudio
+      ? new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
+      : canvasStream;
+
+    const candidates = hasAudio ? VIDEO_EXPORT_CANDIDATES_WITH_AUDIO : VIDEO_EXPORT_CANDIDATES;
+    const picked = candidates.find(c => MediaRecorder.isTypeSupported(c.mime));
+    if (!picked) throw new Error('браузер не поддерживает запись видео');
+
+    const recorder = new MediaRecorder(combinedStream, { mimeType: picked.mime, videoBitsPerSecond: 8_000_000 });
+    const chunks = [];
+    recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+
+    const blob = await new Promise((resolve, reject) => {
+      let raf = null;
+      const hardStopAt = performance.now() + 5 * 60 * 1000;   // защита от зависания на странных файлах
+      const stop = () => {
+        cancelAnimationFrame(raf);
+        video.removeEventListener('timeupdate', onTick);
+        video.pause();
+        if (recorder.state !== 'inactive') recorder.stop();
+      };
+      const onTick = () => {
+        if (onProgress) onProgress(Math.max(0, Math.min(1, (video.currentTime - start) / (end - start))));
+        if (video.currentTime >= end) stop();
+      };
+      const draw = () => {
+        try { renderCard(ctx, card, [W, H], assets, gradient); } catch { /* попробуем на следующем кадре */ }
+        if (video.currentTime >= end || video.ended || performance.now() > hardStopAt) { stop(); return; }
+        raf = requestAnimationFrame(draw);
+      };
+      recorder.onstop = () => {
+        video.muted = wasMuted;
+        if (onProgress) onProgress(1);
+        resolve(new Blob(chunks, { type: picked.mime.split(';')[0] }));
+      };
+      recorder.onerror = e => { video.muted = wasMuted; reject(e.error || new Error('ошибка записи видео')); };
+      video.addEventListener('timeupdate', onTick);
+      recorder.start();
+      video.play().then(() => { raf = requestAnimationFrame(draw); }).catch(reject);
+    });
+    return { blob, ext: picked.ext };
+  } finally {
+    if (attachedHere) video.remove();
+  }
 }
 
 function formatSeconds(s) {
