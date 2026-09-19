@@ -267,6 +267,49 @@ frame, not the full clip. Videos are never explicitly
 disposing photo `Image` objects (both can still be reachable from the undo
 stack).
 
+**Stock photo search** is the one place the app talks to the network at all —
+everything else is genuinely offline-capable. A "🔍" button
+`buildPreviews()` adds to every non-video frame (`.find-photo`, sharing its
+corner with `.edit-trim`/`.has-video` the same way `.find-photo`/`.edit-trim`
+are each other's complement via CSS) opens `#stockPhotoModal` via
+`openStockPhotoModal(index)`, which pre-fills the query from
+`stockQueryFor(index)` — the cover's title/body, or a card's first non-empty
+`line` with markup stripped (`stripMarkupForQuery`) — and kicks off
+`runStockSearch(true)`. `searchStockPhotos()` fans out to three source
+functions in parallel (`searchPixabay`/`searchPexels`/`searchOpenverse`),
+each normalizing its provider's very different response shape into
+`{id, thumb, full, width, height, source, credit, creditUrl}`, then
+round-robin-interleaves whatever came back so the grid mixes sources instead
+of listing one provider's results before the next. None of the three
+functions ever throws — network/parse errors are caught and turned into an
+empty array — so `Promise.all` in `searchStockPhotos()` never needs
+`allSettled`, and one provider being down or unconfigured just thins the
+results rather than breaking the search. `PIXABAY_API_KEY`/`PEXELS_API_KEY`
+are placeholder strings (`'ВАШ_КЛЮЧ_...'`) that ship unset; each search
+function checks for the placeholder prefix and returns `[]` immediately
+rather than firing a request that can only 401 — both keys are free
+(no card) from pixabay.com/api and pexels.com/api and need to be pasted
+into these constants before rebuilding for that source to participate.
+Openverse needs no key (anonymous requests, tighter per-IP rate limit) and
+works out of the box. Unlike Pixabay/Pexels — both blanket-licensed for
+commercial use — Openverse aggregates mixed Creative Commons licenses, so
+its query pins `license=cc0,pdm,by,by-sa` and the response filter drops
+anything without both `width`/`height` reported (can't verify the
+`STOCK_MIN_SIZE` floor otherwise) — deliberately not `by-nc`/`by-nd`
+variants, since the app always composites text/logo over the photo, which
+is a derivative use an ND license forbids regardless of the NC question.
+Clicking a result thumbnail (`insertStockPhoto`) closes the modal, fetches
+`result.full` and hands the response `Blob` straight to the existing
+`setPhoto(index, blob)` — no new image-loading path needed, since
+`fileToImage()` already reads via `FileReader.readAsDataURL()`, which
+accepts any `Blob` (not just a `File`), and a `Blob` from `fetch()` carries
+a real `.type` from the server's `Content-Type` header so `isVideoFile()`
+still resolves correctly. Routing the fetched bytes through `FileReader`
+into a `data:` URI (rather than pointing an `Image.src` straight at the
+provider's URL) is what keeps the canvas untainted for `renderCard`/export
+even though the source was cross-origin — same reason regular file uploads
+never hit CORS/tainting issues either.
+
 **Dark theme** covers the tool's own UI chrome only — never the exported cards,
 which always render in fixed brand colors regardless of app theme (`render.js`
 has no theme awareness at all, by design). All chrome colors are CSS custom
@@ -298,4 +341,24 @@ degrade gracefully rather than break the page; `localStorage` may be unavailable
 in private browsing; video export feature-detects `MediaRecorder.isTypeSupported()`
 across `VIDEO_EXPORT_CANDIDATES` (mp4 variants, then vp9 → vp8 → plain webm)
 and fails with a clear message rather than a crash if none is supported,
-without blocking export of the remaining photo cards.
+without blocking export of the remaining photo cards; stock photo search is
+the one feature that needs real network access to third-party APIs and
+degrades to "no results" rather than breaking anything else when offline or
+when a source's key isn't configured.
+
+**Note for whoever picks this up next**: the stock photo search
+(`searchPixabay`/`searchPexels`/`searchOpenverse`) was built from the
+providers' documented API contracts but has never been exercised against
+the live APIs — this dev sandbox's egress proxy hard-blocks
+`api.openverse.org` (and presumably would block `pixabay.com`/`pexels.com`
+too) with a 403 on CONNECT, and no Pixabay/Pexels API keys were available
+to test with regardless. Everything *around* the network calls (modal
+open/close, query prefill, the click-to-insert pipeline via `setPhoto`) was
+verified end to end by swapping in a fake local image result, which is a
+real test of that code path — but the actual `fetch()` calls, exact
+response field names, and the assumption that these providers' image CDNs
+send CORS headers permissive enough for `fetch()` to read the bytes (not
+just `<img>`-display them) are unverified. Test against the real APIs
+before trusting this in production, and if the response shape doesn't
+match, the fix is almost certainly a small field-name mismatch in the one
+`.map()` in the relevant search function, not the surrounding structure.
