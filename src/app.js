@@ -9,15 +9,19 @@ const PREVIEW_SCALE = 2;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
 
 /*
- * Поиск фото по трём бесплатным источникам разом (см. searchStockPhotos) —
- * Pixabay и Pexels требуют свой бесплатный ключ (заводится на pixabay.com/api
- * и pexels.com/api без карты, за пару минут — вставь вместо заглушек ниже),
- * Openverse ключа не требует вовсе (анонимные запросы, лимит построже).
- * Источник без настроенного ключа просто не участвует в поиске — остальные
- * работают как обычно.
+ * Поиск фото по четырём бесплатным источникам разом (см. searchStockPhotos) —
+ * Pixabay, Pexels и Unsplash требуют свой бесплатный ключ (заводится на
+ * pixabay.com/api, pexels.com/api и unsplash.com/developers без карты, за
+ * пару минут — вставь вместо заглушки ниже), Openverse ключа не требует
+ * вовсе (анонимные запросы, лимит построже). Источник без настроенного
+ * ключа просто не участвует в поиске — остальные работают как обычно.
+ * У Unsplash демо-ключ ограничен 50 запросами в час (своя квота на каждый
+ * источник, не общая) — для более активного использования на
+ * unsplash.com/oauth/applications можно подать заявку на Production-доступ.
  */
 const PIXABAY_API_KEY = '39541689-1120d9cb88846ce0ffcf822d8';
 const PEXELS_API_KEY = 'klZgGCRag8p0P4WwRIXVFfgV0183YbvPnj5MveXkzizgC4d3OWG2GgEr';
+const UNSPLASH_ACCESS_KEY = 'ВАШ_КЛЮЧ_UNSPLASH';
 const STOCK_MIN_SIZE = 720;   // «не меньше 720 пикселей по ширине и высоте» — без исключений
 const STOCK_PER_PAGE = 15;
 
@@ -1068,8 +1072,9 @@ function stockQueryFor(index) {
 }
 
 /*
- * Три источника, у каждого свой формат ответа и свои параметры — приводим
- * к общему виду { id, thumb, full, width, height, source, credit, creditUrl }.
+ * Четыре источника, у каждого свой формат ответа и свои параметры —
+ * приводим к общему виду
+ * { id, thumb, full, width, height, source, credit, creditUrl }.
  * Ни одна из функций не бросает исключение — при ошибке просто пустой
  * массив, чтобы один упавший источник не срывал поиск по остальным
  * (см. searchStockPhotos, Promise.all).
@@ -1166,12 +1171,50 @@ async function searchOpenverse(query, orientation, page) {
   } catch { return []; }
 }
 
-/* Опрашивает все три источника разом и чередует результаты между ними,
+/*
+ * Unsplash требует не только ключ (Client-ID в заголовке Authorization), но
+ * и по своим API Guidelines — обязательный «пинг» download_location при
+ * реальном использовании фото (см. insertStockPhoto), иначе доступ к API
+ * могут отозвать. thumb/full тут не то же самое, что «превью/полный размер»
+ * у остальных источников буквально — urls.thumb это маленькая иконка для
+ * сетки, urls.full — то же изображение в исходном разрешении.
+ */
+async function searchUnsplash(query, orientation, page) {
+  if (!UNSPLASH_ACCESS_KEY || UNSPLASH_ACCESS_KEY.startsWith('ВАШ_')) return [];
+  const params = new URLSearchParams({
+    query, page: String(page), per_page: String(STOCK_PER_PAGE),
+  });
+  if (orientation === 'horizontal') params.set('orientation', 'landscape');
+  if (orientation === 'vertical') params.set('orientation', 'portrait');
+  try {
+    const res = await fetch('https://api.unsplash.com/search/photos?' + params, {
+      headers: { Authorization: 'Client-ID ' + UNSPLASH_ACCESS_KEY },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.results || [])
+      .filter(r => r.width >= STOCK_MIN_SIZE && r.height >= STOCK_MIN_SIZE)
+      .map(r => ({
+        id: 'unsplash-' + r.id,
+        thumb: r.urls && r.urls.thumb,
+        full: r.urls && (r.urls.full || r.urls.regular),
+        width: r.width,
+        height: r.height,
+        source: 'Unsplash',
+        credit: r.user && r.user.name,
+        creditUrl: r.user && r.user.links && r.user.links.html,
+        downloadLocation: r.links && r.links.download_location,
+      }));
+  } catch { return []; }
+}
+
+/* Опрашивает все четыре источника разом и чередует результаты между ними,
    а не склеивает по очереди — так в сетке сразу видно разнообразие. */
 async function searchStockPhotos(query, orientation, page) {
   const lists = await Promise.all([
     searchPixabay(query, orientation, page),
     searchPexels(query, orientation, page),
+    searchUnsplash(query, orientation, page),
     searchOpenverse(query, orientation, page),
   ]);
   const merged = [];
@@ -1252,6 +1295,13 @@ async function insertStockPhoto(result) {
   } catch (err) {
     console.error('не удалось загрузить фото со стока', err);
     say('Не удалось загрузить это фото — попробуй другое');
+    return;
+  }
+  if (result.downloadLocation) {
+    // Обязательный «пинг» по правилам Unsplash API при фактическом использовании фото —
+    // без него доступ к API могут отозвать. Ответ нам не нужен, ошибка не критична.
+    fetch(result.downloadLocation, { headers: { Authorization: 'Client-ID ' + UNSPLASH_ACCESS_KEY } })
+      .catch(() => {});
   }
 }
 
@@ -2337,8 +2387,8 @@ const HELP = [
    'записывать (так почти везде, кроме старых Safari). Обработка полностью ' +
    'локальная, в браузере, без отправки файлов куда-либо.'],
   ['Поиск фото в интернете',
-   'Значок с лупой в углу превью открывает окно поиска сразу по трём ' +
-   'бесплатным источникам — Pixabay, Pexels и Openverse. Строка поиска сама ' +
+   'Значок с лупой в углу превью открывает окно поиска сразу по четырём ' +
+   'бесплатным источникам — Pixabay, Pexels, Unsplash и Openverse. Строка поиска сама ' +
    'подставляет текст карточки (для обложки — заголовок), можно поправить ' +
    'и выбрать ориентацию. В выдаче — только фото не меньше 720 пикселей ' +
    'по каждой стороне и с разрешённым коммерческим использованием. Клик ' +
