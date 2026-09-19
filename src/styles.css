@@ -673,6 +673,79 @@ body {
 .vt-fields { align-items: center; margin-top: 10px; }
 .vt-preview-btn { flex: none; white-space: nowrap; }
 
+.modal-card-wide { width: 860px; }
+
+.sp-controls { display: flex; gap: 8px; margin-top: 14px; }
+.sp-query {
+  flex: 1;
+  height: 36px;
+  border: .5px solid var(--hair);
+  border-radius: 5px;
+  background: var(--white);
+  padding: 0 11px;
+  font: 600 12px/1 var(--ui);
+  color: var(--ink);
+}
+.sp-query::placeholder { color: var(--muted); }
+.sp-query:focus { outline: 2px solid var(--green); outline-offset: 1px; }
+.sp-orientation { flex: none; width: 168px; }
+#spSearchBtn { flex: none; width: auto; padding: 0 18px; }
+
+.sp-status {
+  font: 500 9px/1.4 var(--ui);
+  color: var(--muted);
+  min-height: 14px;
+  margin: 10px 0 0;
+}
+
+.sp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.sp-thumb {
+  position: relative;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--field);
+  aspect-ratio: 4 / 3;
+  padding: 0;
+  cursor: pointer;
+}
+.sp-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.sp-thumb:hover { box-shadow: 0 0 0 2px var(--green) inset; }
+.sp-source {
+  position: absolute;
+  bottom: 4px; left: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, .55);
+  color: var(--on-accent);
+  font: 600 8px/1.4 var(--ui);
+}
+.sp-more-row { display: flex; justify-content: center; margin-top: 14px; }
+
+.frame .find-photo {
+  display: none;
+  position: absolute;
+  bottom: 6px; left: 6px;
+  width: 18px; height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(39, 39, 39, .55);
+  color: var(--on-accent);
+  font: 700 9px/18px var(--ui);
+  text-align: center;
+  padding: 0;
+  cursor: pointer;
+}
+.frame .find-photo:hover { background: rgba(39, 39, 39, .8); }
+.frame:not(.has-video) .find-photo { display: block; }
+
 .menu {
   position: fixed;
   z-index: 50;

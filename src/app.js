@@ -8,6 +8,19 @@ const PREVIEW_CSS_WIDTH = 225;
 const PREVIEW_SCALE = 2;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
 
+/*
+ * Поиск фото по трём бесплатным источникам разом (см. searchStockPhotos) —
+ * Pixabay и Pexels требуют свой бесплатный ключ (заводится на pixabay.com/api
+ * и pexels.com/api без карты, за пару минут — вставь вместо заглушек ниже),
+ * Openverse ключа не требует вовсе (анонимные запросы, лимит построже).
+ * Источник без настроенного ключа просто не участвует в поиске — остальные
+ * работают как обычно.
+ */
+const PIXABAY_API_KEY = 'ВАШ_КЛЮЧ_PIXABAY';
+const PEXELS_API_KEY = 'ВАШ_КЛЮЧ_PEXELS';
+const STOCK_MIN_SIZE = 720;   // «не меньше 720 пикселей по ширине и высоте» — без исключений
+const STOCK_PER_PAGE = 15;
+
 const SAMPLE = `//1
 _Лаура Саламат, Enterprise Architect — сооснователь сообщества IT-архитекторов Казахстана_
 
@@ -615,6 +628,20 @@ function buildPreviews() {
     });
     frame.appendChild(trimBtn);
 
+    // делит нижний левый угол с «✂» — CSS показывает то одно, то другое
+    // в зависимости от .has-video (видео уже можно поменять через ✕ + обычную загрузку)
+    const findBtn = document.createElement('button');
+    findBtn.type = 'button';
+    findBtn.className = 'find-photo';
+    findBtn.textContent = '🔍';
+    findBtn.title = 'Найти фото в интернете';
+    findBtn.addEventListener('pointerdown', e => e.stopPropagation());
+    findBtn.addEventListener('click', e => {
+      e.stopPropagation();
+      openStockPhotoModal(i);
+    });
+    frame.appendChild(findBtn);
+
     attachFrameEvents(frame, i);
     item.appendChild(frame);
     el.previews.appendChild(item);
@@ -1019,6 +1046,213 @@ async function distributePhotos(images, startIndex) {
     used++;
   }
   return used;
+}
+
+/* --------------------------------------------------------- поиск фото */
+
+/* Заголовок/первая строка карточки без разметки — подставляется в поле поиска при открытии окна. */
+function stripMarkupForQuery(text) {
+  return String(text || '')
+    .replace(/\v[^\v]*\v/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/_/g, '')
+    .trim();
+}
+
+function stockQueryFor(index) {
+  const card = allCards()[index];
+  if (!card) return '';
+  if (index === 0) return stripMarkupForQuery(state.cover.title || state.cover.body);
+  const firstLine = (card.lines || []).find(l => l.trim());
+  return stripMarkupForQuery(firstLine);
+}
+
+/*
+ * Три источника, у каждого свой формат ответа и свои параметры — приводим
+ * к общему виду { id, thumb, full, width, height, source, credit, creditUrl }.
+ * Ни одна из функций не бросает исключение — при ошибке просто пустой
+ * массив, чтобы один упавший источник не срывал поиск по остальным
+ * (см. searchStockPhotos, Promise.all).
+ */
+async function searchPixabay(query, orientation, page) {
+  if (!PIXABAY_API_KEY || PIXABAY_API_KEY.startsWith('ВАШ_')) return [];
+  const params = new URLSearchParams({
+    key: PIXABAY_API_KEY,
+    q: query,
+    image_type: 'photo',
+    orientation: orientation === 'horizontal' || orientation === 'vertical' ? orientation : 'all',
+    min_width: String(STOCK_MIN_SIZE),
+    min_height: String(STOCK_MIN_SIZE),
+    safesearch: 'true',
+    per_page: String(STOCK_PER_PAGE),
+    page: String(page),
+  });
+  try {
+    const res = await fetch('https://pixabay.com/api/?' + params);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.hits || []).map(h => ({
+      id: 'pixabay-' + h.id,
+      thumb: h.webformatURL,
+      full: h.largeImageURL || h.webformatURL,
+      width: h.imageWidth,
+      height: h.imageHeight,
+      source: 'Pixabay',
+      credit: h.user,
+      creditUrl: h.pageURL,
+    }));
+  } catch { return []; }
+}
+
+async function searchPexels(query, orientation, page) {
+  if (!PEXELS_API_KEY || PEXELS_API_KEY.startsWith('ВАШ_')) return [];
+  const params = new URLSearchParams({ query, per_page: String(STOCK_PER_PAGE), page: String(page) });
+  if (orientation === 'horizontal') params.set('orientation', 'landscape');
+  if (orientation === 'vertical') params.set('orientation', 'portrait');
+  try {
+    const res = await fetch('https://api.pexels.com/v1/search?' + params, {
+      headers: { Authorization: PEXELS_API_KEY },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.photos || [])
+      .filter(p => p.width >= STOCK_MIN_SIZE && p.height >= STOCK_MIN_SIZE)
+      .map(p => ({
+        id: 'pexels-' + p.id,
+        thumb: p.src && p.src.medium,
+        full: p.src && (p.src.large2x || p.src.large || p.src.original),
+        width: p.width,
+        height: p.height,
+        source: 'Pexels',
+        credit: p.photographer,
+        creditUrl: p.photographer_url || p.url,
+      }));
+  } catch { return []; }
+}
+
+/*
+ * Openverse ключа не требует, но лицензии там разные — оставляем только
+ * cc0/pdm (общественное достояние) и by/by-sa (коммерция и изменения
+ * разрешены с указанием автора), остальное (NC — не для коммерции, ND —
+ * нельзя изменять, а мы накладываем текст и лого) сразу исключаем через
+ * параметр license. Размер у части результатов агрегатора не указан —
+ * такие тоже отбрасываем, раз нельзя проверить «не меньше 720».
+ */
+async function searchOpenverse(query, orientation, page) {
+  const params = new URLSearchParams({
+    q: query,
+    license: 'cc0,pdm,by,by-sa',
+    page: String(page),
+    page_size: String(STOCK_PER_PAGE),
+  });
+  if (orientation === 'horizontal') params.set('aspect_ratio', 'wide');
+  if (orientation === 'vertical') params.set('aspect_ratio', 'tall');
+  try {
+    const res = await fetch('https://api.openverse.org/v1/images/?' + params);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.results || [])
+      .filter(r => r.width >= STOCK_MIN_SIZE && r.height >= STOCK_MIN_SIZE)
+      .map(r => ({
+        id: 'openverse-' + r.id,
+        thumb: r.thumbnail || r.url,
+        full: r.url,
+        width: r.width,
+        height: r.height,
+        source: 'Openverse',
+        credit: r.creator,
+        creditUrl: r.foreign_landing_url,
+      }));
+  } catch { return []; }
+}
+
+/* Опрашивает все три источника разом и чередует результаты между ними,
+   а не склеивает по очереди — так в сетке сразу видно разнообразие. */
+async function searchStockPhotos(query, orientation, page) {
+  const lists = await Promise.all([
+    searchPixabay(query, orientation, page),
+    searchPexels(query, orientation, page),
+    searchOpenverse(query, orientation, page),
+  ]);
+  const merged = [];
+  let more = true;
+  while (more) {
+    more = false;
+    for (const list of lists) {
+      if (list.length) { merged.push(list.shift()); more = true; }
+    }
+  }
+  return merged;
+}
+
+const stockModalState = { index: null, page: 1 };
+
+function openStockPhotoModal(index) {
+  stockModalState.index = index;
+  stockModalState.page = 1;
+  document.getElementById('spQuery').value = stockQueryFor(index);
+  document.getElementById('spOrientation').value = '';
+  document.getElementById('spGrid').innerHTML = '';
+  document.getElementById('spStatus').textContent = '';
+  document.getElementById('spMore').hidden = true;
+  document.getElementById('stockPhotoModal').hidden = false;
+  runStockSearch(true);
+}
+
+function closeStockPhotoModal() {
+  document.getElementById('stockPhotoModal').hidden = true;
+}
+
+async function runStockSearch(reset) {
+  const grid = document.getElementById('spGrid');
+  const status = document.getElementById('spStatus');
+  const moreBtn = document.getElementById('spMore');
+  const query = document.getElementById('spQuery').value.trim();
+  const orientation = document.getElementById('spOrientation').value;
+  if (!query) { status.textContent = 'Введи, что искать'; return; }
+  if (reset) { stockModalState.page = 1; grid.innerHTML = ''; }
+  status.textContent = 'Ищу…';
+  moreBtn.hidden = true;
+  const results = await searchStockPhotos(query, orientation, stockModalState.page);
+  status.textContent = results.length ? '' : 'Ничего не нашлось — попробуй другой запрос';
+  renderStockGrid(results);
+  moreBtn.hidden = !results.length;
+}
+
+function renderStockGrid(results) {
+  const grid = document.getElementById('spGrid');
+  results.forEach(r => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sp-thumb';
+    btn.title = (r.credit ? r.credit + ' — ' : '') + r.source;
+    const img = document.createElement('img');
+    img.src = r.thumb;
+    img.loading = 'lazy';
+    img.alt = '';
+    btn.appendChild(img);
+    const badge = document.createElement('span');
+    badge.className = 'sp-source';
+    badge.textContent = r.source;
+    btn.appendChild(badge);
+    btn.addEventListener('click', () => insertStockPhoto(r));
+    grid.appendChild(btn);
+  });
+}
+
+async function insertStockPhoto(result) {
+  const index = stockModalState.index;
+  closeStockPhotoModal();
+  say('Загружаю фото…');
+  try {
+    const res = await fetch(result.full);
+    if (!res.ok) throw new Error('bad response ' + res.status);
+    const blob = await res.blob();
+    await setPhoto(index, blob);
+  } catch (err) {
+    console.error('не удалось загрузить фото со стока', err);
+    say('Не удалось загрузить это фото — попробуй другое');
+  }
 }
 
 /* ---------------------------------------------------------------- рендер */
@@ -2102,6 +2336,13 @@ const HELP = [
    'ролике. Тот же звук попадает и в экспорт, если браузер умеет его ' +
    'записывать (так почти везде, кроме старых Safari). Обработка полностью ' +
    'локальная, в браузере, без отправки файлов куда-либо.'],
+  ['Поиск фото в интернете',
+   'Значок с лупой в углу превью открывает окно поиска сразу по трём ' +
+   'бесплатным источникам — Pixabay, Pexels и Openverse. Строка поиска сама ' +
+   'подставляет текст карточки (для обложки — заголовок), можно поправить ' +
+   'и выбрать ориентацию. В выдаче — только фото не меньше 720 пикселей ' +
+   'по каждой стороне и с разрешённым коммерческим использованием. Клик ' +
+   'по превьюшке сразу вставляет фото в карточку.'],
   ['Дублирование карточки',
    'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
    'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
@@ -2652,6 +2893,19 @@ function wireEvents() {
   document.getElementById('helpClose').addEventListener('click', closeHelp);
   document.getElementById('helpModal').addEventListener('click', e => {
     if (e.target.id === 'helpModal') closeHelp();
+  });
+  document.getElementById('stockPhotoClose').addEventListener('click', closeStockPhotoModal);
+  document.getElementById('stockPhotoModal').addEventListener('click', e => {
+    if (e.target.id === 'stockPhotoModal') closeStockPhotoModal();
+  });
+  document.getElementById('spSearchBtn').addEventListener('click', () => runStockSearch(true));
+  document.getElementById('spQuery').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runStockSearch(true); }
+  });
+  document.getElementById('spOrientation').addEventListener('change', () => runStockSearch(true));
+  document.getElementById('spMore').addEventListener('click', () => {
+    stockModalState.page++;
+    runStockSearch(false);
   });
   document.getElementById('btnImport').addEventListener('click', () => {
     el.filePicker.value = '';

@@ -246,6 +246,33 @@ __CSS__
   </div>
 </div>
 
+<div class="modal" id="stockPhotoModal" role="dialog" aria-modal="true" aria-label="Поиск фото" hidden>
+  <div class="modal-card modal-card-wide">
+    <button class="modal-close" id="stockPhotoClose" type="button" aria-label="Закрыть">✕</button>
+    <div class="modal-body">
+      <h2>Поиск фото</h2>
+      <p>Pixabay, Pexels и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
+      <div class="sp-controls">
+        <input type="text" id="spQuery" class="sp-query" placeholder="Что ищем?">
+        <label class="control sp-orientation">
+          <select id="spOrientation" aria-label="Ориентация">
+            <option value="">Любая ориентация</option>
+            <option value="horizontal">Горизонтальная</option>
+            <option value="vertical">Вертикальная</option>
+          </select>
+          <span class="caret" data-icon="caret"></span>
+        </label>
+        <button type="button" class="btn-green" id="spSearchBtn">Искать</button>
+      </div>
+      <p class="sp-status" id="spStatus"></p>
+      <div class="sp-grid" id="spGrid"></div>
+      <div class="sp-more-row">
+        <button type="button" class="btn-ghost" id="spMore" hidden>Показать ещё</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="menu" id="menu" role="menu"></div>
 
 <input type="file" id="filePicker" accept="image/*,video/*" multiple hidden>
