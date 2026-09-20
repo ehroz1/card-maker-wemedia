@@ -57,7 +57,7 @@ __CSS__
         title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
     </p>
     <div class="editor-area">
-      <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="false"
+      <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="true"
            role="textbox" aria-multiline="true" aria-label="Текст карточек"
            data-placeholder="//1 — новая карточка. Наберите текст, выделите и нажмите ⌘B или ⌘I"></div>
     </div>
@@ -130,7 +130,11 @@ __CSS__
         </div>
       </div>
 
-      <p class="section-label spaced">Трансформация выбранной картинки</p>
+      <p class="section-label spaced">
+        Трансформация выбранной картинки
+        <button type="button" class="btn-ghost" id="btnResetTransform"
+          title="Вернуть масштаб, сдвиг и поворот к значениям по умолчанию">Сбросить</button>
+      </p>
 
       <div class="range-row">
         <div class="range-head"><span>Масштаб</span><output id="scaleOut">0%</output></div>
@@ -216,6 +220,7 @@ __CSS__
   <button id="btnExportBar" type="button" title="Экспортировать все карточки" data-icon="export"></button>
   <button id="btnTelegram" type="button" title="Отправить карточки в Telegram" data-icon="telegram"></button>
   <span class="sep"></span>
+  <button id="btnFocus" type="button" title="Режим фокуса" data-icon="focus"></button>
   <button id="btnHelp" type="button" title="Инструкция" data-icon="help"></button>
   <button id="btnTheme" type="button" title="Тёмная тема" data-icon="theme"></button>
 </div>
@@ -251,7 +256,7 @@ __CSS__
     <button class="modal-close" id="stockPhotoClose" type="button" aria-label="Закрыть">✕</button>
     <div class="modal-body">
       <h2>Поиск фото</h2>
-      <p>Pixabay, Pexels и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
+      <p>Pixabay, Pexels, Unsplash и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
       <div class="sp-controls">
         <input type="text" id="spQuery" class="sp-query" placeholder="Что ищем?">
         <label class="control sp-orientation">

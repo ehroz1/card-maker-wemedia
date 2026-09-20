@@ -126,6 +126,13 @@ body {
 .panel-editor   { width: 432px; flex: 1 1 auto; min-width: 0; padding: 21px 12px 12px; }
 .panel-tools    { width: 260px; flex: none; padding: 23px 12px 12px; }
 
+/* Режим фокуса: прячет панель типографики и все карточки в превью, кроме
+   текущей — остаются только текст и превью выбранной карточки, без
+   отвлечения. :has() есть во всех современных браузерах; там, где нет,
+   просто не фильтрует превью — ничего не ломается. */
+body.focus-mode .panel-tools { display: none; }
+body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { display: none; }
+
 .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .scroll::-webkit-scrollbar { width: 4px; }
 .scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 20px; }

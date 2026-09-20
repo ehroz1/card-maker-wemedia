@@ -153,6 +153,19 @@ function toggleTheme() {
   syncThemeButton();
 }
 
+/* --------------------------------------------------------- режим фокуса */
+/*
+ * Прячет панель типографики и все карточки в превью, кроме выбранной (см.
+ * .focus-mode в styles.css) — только текст и текущая карточка, без
+ * отвлекающих панелей. Переключение чисто визуальное — ничего в state не
+ * меняет, поэтому не персистится между перезагрузками, в отличие от темы.
+ */
+function toggleFocusMode() {
+  const on = document.body.classList.toggle('focus-mode');
+  const btn = document.getElementById('btnFocus');
+  if (btn) btn.classList.toggle('active', on);
+}
+
 /* ------------------------------------------------------------- хранилище */
 
 function loadTemplates() {
@@ -877,6 +890,26 @@ function paintTransformOutputs() {
   el.contrastOut.textContent = el.rngContrast.value + '%';
 }
 
+/* Возвращает масштаб/сдвиг/поворот выбранной карточки к значениям по
+   умолчанию — фильтры (чёрно-белое/яркость/контраст) не трогает, это
+   отдельная настройка. */
+function resetTransform() {
+  const index = state.current;
+  const card = allCards()[index];
+  if (!card || !card.img) return;
+  pushUndo();
+  card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+  if (index === 0) {
+    state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+  } else {
+    commitTransform(index);
+  }
+  syncTransformControls();
+  scheduleRender();
+  saveProject();
+  say('Трансформация сброшена');
+}
+
 /* ------------------------------------------------------------------ фото */
 
 function fileToImage(file) {
@@ -968,6 +1001,24 @@ function fileToVideo(file) {
   });
 }
 
+/*
+ * Ищет, не используется ли уже точно такое же фото на другой карточке —
+ * сравнением data: URI (fileToImage читает файл через FileReader.readAsDataURL,
+ * так что одинаковые байты всегда дают одинаковую строку). Только для фото:
+ * у видео свой object URL на каждую загрузку (см. fileToVideo), сравнивать их
+ * между собой бессмысленно. Возвращает индекс в allCards() карточки-совпадения
+ * или null.
+ */
+function findDuplicatePhotoOwner(index, src) {
+  if (index !== 0 && state.cover.img instanceof HTMLImageElement && state.cover.img.src === src) return 0;
+  for (let i = 0; i < state.cardIds.length; i++) {
+    if (index === i + 1) continue;
+    const img = state.photosById[state.cardIds[i]];
+    if (img instanceof HTMLImageElement && img.src === src) return i + 1;
+  }
+  return null;
+}
+
 async function setPhoto(index, file, { skipUndo = false } = {}) {
   try {
     const media = isVideoFile(file) ? await fileToVideo(file) : await fileToImage(file);
@@ -989,7 +1040,12 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
     }
     selectCard(index);
     scheduleRender();
-    say(media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено');
+    let statusText = media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено';
+    if (!(media instanceof HTMLVideoElement)) {
+      const dupIndex = findDuplicatePhotoOwner(index, media.src);
+      if (dupIndex !== null) statusText += ' — уже используется: ' + cardLabel(dupIndex).toLowerCase();
+    }
+    say(statusText);
     if (media instanceof HTMLVideoElement) {
       // спрашиваем обрезку сразу при загрузке, а не откладываем до экспорта —
       // «Отмена» тут просто оставляет ролик целиком (обрезка по умолчанию),
@@ -2374,7 +2430,11 @@ const HELP = [
    'медиа (//N-). Крестик в углу превью (появляется, если на карточке есть ' +
    'фото или видео) убирает его обратно — текст при этом не трогается. ' +
    'В блоке «Трансформация» — ещё чёрно-белое, яркость и контраст, тоже ' +
-   'применяются и к фото, и к видео выбранной карточки.'],
+   'применяются и к фото, и к видео выбранной карточки; кнопка «Сбросить» ' +
+   'рядом с заголовком блока возвращает масштаб, сдвиг и поворот к исходным ' +
+   'значениям (фильтры не трогает). Если одно и то же фото случайно ' +
+   'попало на две карточки, при загрузке второй появится подсказка, ' +
+   'на какой карточке оно уже используется.'],
   ['Видео на карточке',
    'Работает как фото: та же вставка, то же масштабирование, сдвиг, поворот, ' +
    'чёрно-белое, яркость и контраст. Сразу после загрузки открывается окно ' +
@@ -2445,6 +2505,12 @@ const HELP = [
    'они выглядят одинаково в любой теме. Пока не нажмёшь кнопку, тема ' +
    'подстраивается под системную настройку устройства и меняется вместе ' +
    'с ней; после нажатия выбор запоминается и не зависит от системной темы.'],
+  ['Режим фокуса',
+   'Кнопка с уголками рядом с «Инструкцией» прячет панель типографики ' +
+   'и все карточки в превью, кроме выбранной — остаются только текст ' +
+   'и текущая карточка, без лишнего вокруг. Повторное нажатие или Escape ' +
+   'возвращают обычный вид. Фото, видео и настройки при этом никуда ' +
+   'не деваются — режим чисто визуальный.'],
 ];
 
 function openHelp() {
@@ -2938,6 +3004,8 @@ function wireEvents() {
   document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
+  document.getElementById('btnResetTransform').addEventListener('click', resetTransform);
+  document.getElementById('btnFocus').addEventListener('click', toggleFocusMode);
   document.getElementById('btnHelp').addEventListener('click', openHelp);
   document.getElementById('btnTheme').addEventListener('click', toggleTheme);
   document.getElementById('helpClose').addEventListener('click', closeHelp);
@@ -3047,9 +3115,26 @@ function wireEvents() {
     if (!el.menu.contains(e.target) && !e.target.closest('.bar button')) closeMenu();
   });
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeMenu(); closeHelp(); clearSelection(); }
+    if (e.key === 'Escape') {
+      closeMenu(); closeHelp(); clearSelection();
+      if (document.body.classList.contains('focus-mode')) toggleFocusMode();
+    }
   });
   window.addEventListener('resize', () => closeMenu());
+
+  /*
+   * Фото и видео нигде не персистятся (saveProject/localStorage хранит
+   * только текст и настройки — см. CLAUDE.md), поэтому закрытие вкладки
+   * с загруженной медией теряет её безвозвратно. Текст же переживёт
+   * закрытие (он и так уже в localStorage после каждой правки), поэтому
+   * предупреждение показываем только когда есть фото/видео, а не всегда.
+   */
+  window.addEventListener('beforeunload', e => {
+    const hasMedia = Boolean(state.cover.img) || Object.values(state.photosById).some(Boolean);
+    if (!hasMedia) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
 }
 
 /* ------------------------------------------------------ размеры панелей */

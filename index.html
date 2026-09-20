@@ -145,6 +145,13 @@ body {
 .panel-editor   { width: 432px; flex: 1 1 auto; min-width: 0; padding: 21px 12px 12px; }
 .panel-tools    { width: 260px; flex: none; padding: 23px 12px 12px; }
 
+/* Режим фокуса: прячет панель типографики и все карточки в превью, кроме
+   текущей — остаются только текст и превью выбранной карточки, без
+   отвлечения. :has() есть во всех современных браузерах; там, где нет,
+   просто не фильтрует превью — ничего не ломается. */
+body.focus-mode .panel-tools { display: none; }
+body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { display: none; }
+
 .scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 .scroll::-webkit-scrollbar { width: 4px; }
 .scroll::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 20px; }
@@ -890,7 +897,7 @@ body {
         title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
     </p>
     <div class="editor-area">
-      <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="false"
+      <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="true"
            role="textbox" aria-multiline="true" aria-label="Текст карточек"
            data-placeholder="//1 — новая карточка. Наберите текст, выделите и нажмите ⌘B или ⌘I"></div>
     </div>
@@ -963,7 +970,11 @@ body {
         </div>
       </div>
 
-      <p class="section-label spaced">Трансформация выбранной картинки</p>
+      <p class="section-label spaced">
+        Трансформация выбранной картинки
+        <button type="button" class="btn-ghost" id="btnResetTransform"
+          title="Вернуть масштаб, сдвиг и поворот к значениям по умолчанию">Сбросить</button>
+      </p>
 
       <div class="range-row">
         <div class="range-head"><span>Масштаб</span><output id="scaleOut">0%</output></div>
@@ -1049,6 +1060,7 @@ body {
   <button id="btnExportBar" type="button" title="Экспортировать все карточки" data-icon="export"></button>
   <button id="btnTelegram" type="button" title="Отправить карточки в Telegram" data-icon="telegram"></button>
   <span class="sep"></span>
+  <button id="btnFocus" type="button" title="Режим фокуса" data-icon="focus"></button>
   <button id="btnHelp" type="button" title="Инструкция" data-icon="help"></button>
   <button id="btnTheme" type="button" title="Тёмная тема" data-icon="theme"></button>
 </div>
@@ -1084,7 +1096,7 @@ body {
     <button class="modal-close" id="stockPhotoClose" type="button" aria-label="Закрыть">✕</button>
     <div class="modal-body">
       <h2>Поиск фото</h2>
-      <p>Pixabay, Pexels и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
+      <p>Pixabay, Pexels, Unsplash и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
       <div class="sp-controls">
         <input type="text" id="spQuery" class="sp-query" placeholder="Что ищем?">
         <label class="control sp-orientation">
@@ -1120,6 +1132,7 @@ const ICONS = {
   'delete-selected': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="var(--icon-bg)"/> <path d="M11 13H25" stroke="var(--icon-fg)" stroke-width="2" stroke-linecap="round"/> <path d="M15 13V11C15 10.4477 15.4477 10 16 10H20C20.5523 10 21 10.4477 21 11V13" stroke="var(--icon-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/> <path d="M13 13V24C13 25.1046 13.8954 26 15 26H21C22.1046 26 23 25.1046 23 24V13" stroke="var(--icon-fg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/> <path d="M16 17V22" stroke="var(--icon-fg)" stroke-width="1.6" stroke-linecap="round"/> <path d="M20 17V22" stroke="var(--icon-fg)" stroke-width="1.6" stroke-linecap="round"/> </svg>',
   'duplicate': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="var(--icon-bg)"/> <rect x="13" y="7" width="15" height="15" rx="3" fill="var(--icon-fg)" fill-opacity="0.4"/> <rect x="8" y="14" width="15" height="15" rx="3" fill="var(--icon-fg)"/> </svg>',
   'export': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="var(--icon-bg)"/> <g clip-path="url(#clip0_2024_536)"> <path d="M16.2318 23.1017C17.2078 24.0783 18.7907 24.0788 19.7674 23.1028C19.7677 23.1024 19.7681 23.1021 19.7685 23.1017L22.4443 20.4259C22.753 20.0845 22.7265 19.5575 22.3851 19.2488C22.0672 18.9614 21.5833 18.962 21.266 19.25L18.8277 21.6892L18.8335 8.83336C18.8335 8.37309 18.4604 8 18.0001 8C17.5399 8 17.1668 8.37309 17.1668 8.83332L17.1593 21.6733L14.7343 19.25C14.4087 18.9246 13.881 18.9248 13.5556 19.2504C13.2302 19.5761 13.2304 20.1038 13.556 20.4292L16.2318 23.1017Z" fill="var(--icon-fg)"/> <path d="M27.1667 21.3333C26.7064 21.3333 26.3334 21.7064 26.3334 22.1666V25.5C26.3334 25.9602 25.9603 26.3333 25.5 26.3333H10.5C10.0398 26.3333 9.66668 25.9602 9.66668 25.5V22.1667C9.66668 21.7064 9.29359 21.3334 8.83336 21.3334C8.37309 21.3333 8 21.7064 8 22.1667V25.5C8 26.8807 9.1193 28 10.5 28H25.5C26.8807 28 28 26.8807 28 25.5V22.1667C28 21.7064 27.6269 21.3333 27.1667 21.3333Z" fill="var(--icon-fg)"/> </g> <defs> <clipPath id="clip0_2024_536"> <rect width="20" height="20" fill="white" transform="translate(8 8)"/> </clipPath> </defs> </svg>',
+  'focus': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="var(--icon-bg)"/> <rect x="9" y="9" width="6" height="2" rx="1" fill="var(--icon-fg)"/> <rect x="9" y="9" width="2" height="6" rx="1" fill="var(--icon-fg)"/> <rect x="21" y="9" width="6" height="2" rx="1" fill="var(--icon-fg)"/> <rect x="25" y="9" width="2" height="6" rx="1" fill="var(--icon-fg)"/> <rect x="9" y="25" width="6" height="2" rx="1" fill="var(--icon-fg)"/> <rect x="9" y="19" width="2" height="6" rx="1" fill="var(--icon-fg)"/> <rect x="21" y="25" width="6" height="2" rx="1" fill="var(--icon-fg)"/> <rect x="25" y="19" width="2" height="6" rx="1" fill="var(--icon-fg)"/> </svg>',
   'format': '<svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="30" height="30" rx="4.16667" fill="var(--icon-bg)"/> <g clip-path="url(#clip0_2024_629)"> <path d="M16.9007 16.2133L24.5157 8.59829C25.1485 7.96646 25.2566 6.72431 24.1615 6.04579C23.2245 5.58462 22.4998 5.97771 22.1624 6.37161L14.8557 14.4642C15.7119 14.8053 16.431 15.4204 16.9007 16.2133Z" fill="var(--icon-fg)"/> <path d="M9.16663 20.8333H13.3333C14.714 20.8333 15.8333 19.714 15.8333 18.3333C15.8333 16.9526 14.714 15.8333 13.3333 15.8333C9.99995 15.8333 9.16663 20.8333 9.16663 20.8333Z" fill="var(--icon-fg)"/> <path d="M18.3333 20.8333C18.3333 19.4526 19.4526 18.3333 20.8333 18.3333H25V10.4708L17.4667 18.0042C17.4759 18.115 17.5 18.2209 17.5 18.3334C17.4972 20.6334 15.6334 22.4973 13.3333 22.5H9.16668C8.24621 22.5001 7.49992 21.754 7.4998 20.8336C7.4998 20.7416 7.50738 20.6498 7.5225 20.5592C7.90082 18.2909 9.44582 14.5309 12.85 14.1992L20.9208 5.26082C21.0001 5.18094 21.0836 5.10527 21.1708 5.03414C21.0575 5.025 20.9492 5 20.8333 5H9.16668C6.86664 5.00277 5.00277 6.86664 5 9.16668V20.8334C5.00277 23.1334 6.86664 24.9973 9.16668 25H18.3334V20.8333H18.3333Z" fill="var(--icon-fg)"/> <path d="M20.8333 20C20.3731 20 20 20.3731 20 20.8333V24.75C20.5879 24.5484 21.1228 24.2168 21.565 23.78L23.78 21.565C24.2168 21.1228 24.5484 20.5879 24.75 20H20.8333Z" fill="var(--icon-fg)"/> </g> <defs> <clipPath id="clip0_2024_629"> <rect width="20" height="20" fill="white" transform="translate(5 5)"/> </clipPath> </defs> </svg>',
   'help': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36" fill="none"> <rect width="36" height="36" rx="5" fill="var(--icon-bg)"/> <circle cx="18" cy="18" r="9.2" stroke="var(--icon-fg)" stroke-width="1.9"/> <path d="M15.3 15.2c0-1.5 1.2-2.7 2.8-2.7 1.5 0 2.7 1.1 2.7 2.5 0 2.3-2.7 2.2-2.7 4.4" stroke="var(--icon-fg)" stroke-width="1.9" stroke-linecap="round"/> <circle cx="18.1" cy="23.2" r="1.25" fill="var(--icon-fg)"/> </svg>',
   'import': '<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg"> <rect width="36" height="36" rx="5" fill="#0DAC67"/> <path d="M18 9V21.5" stroke="white" stroke-width="2" stroke-linecap="round"/> <path d="M12.5 15.5L18 9L23.5 15.5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/> <path d="M9.5 25H26.5" stroke="white" stroke-width="2" stroke-linecap="round"/> </svg>',
@@ -2175,6 +2188,19 @@ function toggleTheme() {
   syncThemeButton();
 }
 
+/* --------------------------------------------------------- режим фокуса */
+/*
+ * Прячет панель типографики и все карточки в превью, кроме выбранной (см.
+ * .focus-mode в styles.css) — только текст и текущая карточка, без
+ * отвлекающих панелей. Переключение чисто визуальное — ничего в state не
+ * меняет, поэтому не персистится между перезагрузками, в отличие от темы.
+ */
+function toggleFocusMode() {
+  const on = document.body.classList.toggle('focus-mode');
+  const btn = document.getElementById('btnFocus');
+  if (btn) btn.classList.toggle('active', on);
+}
+
 /* ------------------------------------------------------------- хранилище */
 
 function loadTemplates() {
@@ -2899,6 +2925,26 @@ function paintTransformOutputs() {
   el.contrastOut.textContent = el.rngContrast.value + '%';
 }
 
+/* Возвращает масштаб/сдвиг/поворот выбранной карточки к значениям по
+   умолчанию — фильтры (чёрно-белое/яркость/контраст) не трогает, это
+   отдельная настройка. */
+function resetTransform() {
+  const index = state.current;
+  const card = allCards()[index];
+  if (!card || !card.img) return;
+  pushUndo();
+  card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+  if (index === 0) {
+    state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
+  } else {
+    commitTransform(index);
+  }
+  syncTransformControls();
+  scheduleRender();
+  saveProject();
+  say('Трансформация сброшена');
+}
+
 /* ------------------------------------------------------------------ фото */
 
 function fileToImage(file) {
@@ -2990,6 +3036,24 @@ function fileToVideo(file) {
   });
 }
 
+/*
+ * Ищет, не используется ли уже точно такое же фото на другой карточке —
+ * сравнением data: URI (fileToImage читает файл через FileReader.readAsDataURL,
+ * так что одинаковые байты всегда дают одинаковую строку). Только для фото:
+ * у видео свой object URL на каждую загрузку (см. fileToVideo), сравнивать их
+ * между собой бессмысленно. Возвращает индекс в allCards() карточки-совпадения
+ * или null.
+ */
+function findDuplicatePhotoOwner(index, src) {
+  if (index !== 0 && state.cover.img instanceof HTMLImageElement && state.cover.img.src === src) return 0;
+  for (let i = 0; i < state.cardIds.length; i++) {
+    if (index === i + 1) continue;
+    const img = state.photosById[state.cardIds[i]];
+    if (img instanceof HTMLImageElement && img.src === src) return i + 1;
+  }
+  return null;
+}
+
 async function setPhoto(index, file, { skipUndo = false } = {}) {
   try {
     const media = isVideoFile(file) ? await fileToVideo(file) : await fileToImage(file);
@@ -3011,7 +3075,12 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
     }
     selectCard(index);
     scheduleRender();
-    say(media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено');
+    let statusText = media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено';
+    if (!(media instanceof HTMLVideoElement)) {
+      const dupIndex = findDuplicatePhotoOwner(index, media.src);
+      if (dupIndex !== null) statusText += ' — уже используется: ' + cardLabel(dupIndex).toLowerCase();
+    }
+    say(statusText);
     if (media instanceof HTMLVideoElement) {
       // спрашиваем обрезку сразу при загрузке, а не откладываем до экспорта —
       // «Отмена» тут просто оставляет ролик целиком (обрезка по умолчанию),
@@ -4396,7 +4465,11 @@ const HELP = [
    'медиа (//N-). Крестик в углу превью (появляется, если на карточке есть ' +
    'фото или видео) убирает его обратно — текст при этом не трогается. ' +
    'В блоке «Трансформация» — ещё чёрно-белое, яркость и контраст, тоже ' +
-   'применяются и к фото, и к видео выбранной карточки.'],
+   'применяются и к фото, и к видео выбранной карточки; кнопка «Сбросить» ' +
+   'рядом с заголовком блока возвращает масштаб, сдвиг и поворот к исходным ' +
+   'значениям (фильтры не трогает). Если одно и то же фото случайно ' +
+   'попало на две карточки, при загрузке второй появится подсказка, ' +
+   'на какой карточке оно уже используется.'],
   ['Видео на карточке',
    'Работает как фото: та же вставка, то же масштабирование, сдвиг, поворот, ' +
    'чёрно-белое, яркость и контраст. Сразу после загрузки открывается окно ' +
@@ -4467,6 +4540,12 @@ const HELP = [
    'они выглядят одинаково в любой теме. Пока не нажмёшь кнопку, тема ' +
    'подстраивается под системную настройку устройства и меняется вместе ' +
    'с ней; после нажатия выбор запоминается и не зависит от системной темы.'],
+  ['Режим фокуса',
+   'Кнопка с уголками рядом с «Инструкцией» прячет панель типографики ' +
+   'и все карточки в превью, кроме выбранной — остаются только текст ' +
+   'и текущая карточка, без лишнего вокруг. Повторное нажатие или Escape ' +
+   'возвращают обычный вид. Фото, видео и настройки при этом никуда ' +
+   'не деваются — режим чисто визуальный.'],
 ];
 
 function openHelp() {
@@ -4960,6 +5039,8 @@ function wireEvents() {
   document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
   document.getElementById('btnClear').addEventListener('click', clearAll);
   document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
+  document.getElementById('btnResetTransform').addEventListener('click', resetTransform);
+  document.getElementById('btnFocus').addEventListener('click', toggleFocusMode);
   document.getElementById('btnHelp').addEventListener('click', openHelp);
   document.getElementById('btnTheme').addEventListener('click', toggleTheme);
   document.getElementById('helpClose').addEventListener('click', closeHelp);
@@ -5069,9 +5150,26 @@ function wireEvents() {
     if (!el.menu.contains(e.target) && !e.target.closest('.bar button')) closeMenu();
   });
   window.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { closeMenu(); closeHelp(); clearSelection(); }
+    if (e.key === 'Escape') {
+      closeMenu(); closeHelp(); clearSelection();
+      if (document.body.classList.contains('focus-mode')) toggleFocusMode();
+    }
   });
   window.addEventListener('resize', () => closeMenu());
+
+  /*
+   * Фото и видео нигде не персистятся (saveProject/localStorage хранит
+   * только текст и настройки — см. CLAUDE.md), поэтому закрытие вкладки
+   * с загруженной медией теряет её безвозвратно. Текст же переживёт
+   * закрытие (он и так уже в localStorage после каждой правки), поэтому
+   * предупреждение показываем только когда есть фото/видео, а не всегда.
+   */
+  window.addEventListener('beforeunload', e => {
+    const hasMedia = Boolean(state.cover.img) || Object.values(state.photosById).some(Boolean);
+    if (!hasMedia) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
 }
 
 /* ------------------------------------------------------ размеры панелей */
