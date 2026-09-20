@@ -21,7 +21,7 @@ const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
  */
 const PIXABAY_API_KEY = '39541689-1120d9cb88846ce0ffcf822d8';
 const PEXELS_API_KEY = 'klZgGCRag8p0P4WwRIXVFfgV0183YbvPnj5MveXkzizgC4d3OWG2GgEr';
-const UNSPLASH_ACCESS_KEY = 'ВАШ_КЛЮЧ_UNSPLASH';
+const UNSPLASH_ACCESS_KEY = 'CQixfAKKmy4-7UkY88ZHps4ZOGDUyQ0vctcJyOH1zHM';
 const STOCK_MIN_SIZE = 720;   // «не меньше 720 пикселей по ширине и высоте» — без исключений
 const STOCK_PER_PAGE = 15;
 
