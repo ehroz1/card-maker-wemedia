@@ -153,6 +153,85 @@ function toggleTheme() {
   syncThemeButton();
 }
 
+/* ------------------------------------------------ установка на телефон */
+/*
+ * Приложение уже полноценный PWA (manifest.webmanifest + service-worker.js,
+ * см. CLAUDE.md) — Android/Chrome сам предлагает установку через системное
+ * UI, но по умолчанию хочет своего повода (не сразу при первом заходе) и
+ * многие просто не замечают этой возможности. iOS вообще не имеет
+ * программного API установки — там единственный путь: Поделиться → «На
+ * экран «Домой»», и без подсказки почти никто об этом не знает. Баннер
+ * ниже — единая точка входа для обоих случаев: на Android перехватывает
+ * `beforeinstallprompt` и показывает свою кнопку «Установить», на iOS —
+ * просто текстовую инструкцию (кнопки там нет и быть не может). Не
+ * показывается повторно, если уже установлено (display-mode: standalone)
+ * или если его один раз закрыли (запоминается в localStorage).
+ */
+const STORE_INSTALL_DISMISSED = 'cardmaker.installDismissed.v1';
+let deferredInstallPrompt = null;
+
+function isStandaloneDisplay() {
+  return Boolean(
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+    window.navigator.standalone   // старое свойство Safari на iOS
+  );
+}
+
+/* iPadOS с версии 13 представляется как обычный Mac (platform === 'MacIntel'),
+   отличить от настоящего Mac можно только по наличию тачскрина. */
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function hideInstallBanner() {
+  document.getElementById('installBanner').hidden = true;
+}
+
+function dismissInstallBanner() {
+  hideInstallBanner();
+  try { localStorage.setItem(STORE_INSTALL_DISMISSED, '1'); } catch { /* не критично */ }
+}
+
+function showInstallBanner(mode) {
+  const banner = document.getElementById('installBanner');
+  const text = document.getElementById('installBannerText');
+  const action = document.getElementById('installBannerAction');
+  if (mode === 'ios') {
+    text.textContent = 'Установи на телефон: нажми «Поделиться» внизу браузера → «На экран «Домой»».';
+    action.hidden = true;
+  } else {
+    text.textContent = 'Установи это приложение на телефон — иконка на рабочем столе, работает офлайн.';
+    action.hidden = false;
+  }
+  banner.hidden = false;
+}
+
+function wireInstallBanner() {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(STORE_INSTALL_DISMISSED) === '1'; } catch { /* не критично */ }
+  if (dismissed || isStandaloneDisplay()) return;
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();   // гасим стандартный мини-баннер браузера — показываем свой, единообразный
+    deferredInstallPrompt = e;
+    showInstallBanner('android');
+  });
+
+  if (isIosDevice()) showInstallBanner('ios');
+
+  document.getElementById('installBannerAction').addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    hideInstallBanner();
+  });
+  document.getElementById('installBannerClose').addEventListener('click', dismissInstallBanner);
+  // приложение реально установили (через наш баннер или системный путь) — прятать больше незачем
+  window.addEventListener('appinstalled', hideInstallBanner);
+}
+
 /* --------------------------------------------------------- режим фокуса */
 /*
  * Прячет панель типографики и все карточки в превью, кроме выбранной (см.
@@ -2511,6 +2590,13 @@ const HELP = [
    'и текущая карточка, без лишнего вокруг. Повторное нажатие или Escape ' +
    'возвращают обычный вид. Фото, видео и настройки при этом никуда ' +
    'не деваются — режим чисто визуальный.'],
+  ['Установка на телефон',
+   'Приложение можно сохранить как иконку на рабочем столе и открывать ' +
+   'без браузерной строки адреса, как обычное приложение. На Android ' +
+   'сверху появится баннер с кнопкой «Установить»; на iPhone/iPad такой ' +
+   'кнопки не бывает — там баннер просто подсказывает путь: «Поделиться» ' +
+   'внизу экрана → «На экран «Домой»». Уже установленным — работает ' +
+   'и без интернета (кроме поиска фото в интернете, ему всегда нужна сеть).'],
 ];
 
 function openHelp() {
@@ -3207,6 +3293,7 @@ async function start() {
   setupPanelResize();
   syncUndoButtons();
   syncSelectionUI();
+  wireInstallBanner();
 
   try {
     await Promise.all([

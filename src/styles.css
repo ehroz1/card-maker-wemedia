@@ -565,6 +565,43 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
   transition: width .15s ease;
 }
 
+/* --------------------------------------------- баннер «на экран Домой» */
+
+.install-banner {
+  position: fixed;
+  left: 50%;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: calc(100vw - 24px);
+  width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .14);
+  padding: 10px 12px;
+}
+.install-banner[hidden] { display: none; }
+.install-banner span {
+  flex: 1;
+  font: 500 11px/1.4 var(--ui);
+  color: var(--ink);
+}
+.install-banner .btn-green { flex: none; height: 28px; padding: 0 12px; font-size: 10.5px; }
+.install-banner-close {
+  flex: none;
+  width: 22px; height: 22px;
+  border: 0; border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.install-banner-close:hover { color: var(--ink); }
+
 /* -------------------------------------------------------- нижняя панель */
 
 .bar {
@@ -608,6 +645,13 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
   inset: 0;
   background: rgba(20, 28, 36, .38);
   display: grid;
+  /* без явного grid-template-columns одна неявная колонка сама подстраивается
+     под содержимое .modal-card (т.к. place-items:center не растягивает её) —
+     тогда max-width:100% у карточки считается от этой же самопроизвольной
+     ширины и ничего не ограничивает. minmax(0, 1fr) привязывает колонку
+     к реальной ширине .modal, иначе на узком экране карточка вылезает
+     за пределы viewport (видно только на мобильном, на десктопе не заметно). */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   z-index: 60;
   padding: 24px;
@@ -808,18 +852,37 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
 
 /* --- телефон */
 @media (max-width: 560px) {
-  body { padding: 12px 8px 132px; }
+  /* .page-footer ниже переходит в обычный поток (position: static) — без
+     column тут он всплыл бы вторым элементом в ряд рядом с .workspace
+     (body — flex-контейнер), а не строкой под ним */
+  body { padding: 12px 8px 132px; flex-direction: column; align-items: center; }
   .panel { border-radius: 12px; }
   .panel-previews { padding: 8px; }
   .panel-editor, .panel-tools { padding: 14px 10px; }
   .field { padding: 0 12px 0 14px; }
   .control-row { flex-wrap: wrap; }
   .control, .align-group { min-width: 110px; }
-  .bar { gap: 6px; padding: 8px 10px; }
-  .bar button { width: 32px; height: 32px; }
-  .bar button svg { width: 32px; height: 32px; }
-  .bar button.small svg { width: 27px; height: 27px; }
+
+  /* Бар с ~20 кнопками не вмещается в один ряд на телефоне — вместо переноса
+     в высокий блок в несколько рядов (перекрывал бы контент) даём один ряд
+     с горизонтальной прокруткой: компактно по высоте, всё так же доступно. */
+  .bar {
+    left: 8px; right: 8px; bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+    max-width: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px; padding: 6px 10px;
+  }
+  .bar::-webkit-scrollbar { display: none; }
+  .bar button { width: 40px; height: 40px; }
+  .bar button svg { width: 34px; height: 34px; }
+  .bar button.small svg { width: 29px; height: 29px; }
   .bar .sep { display: none; }
+
   .page-footer { position: static; padding: 14px 4px 0; flex-direction: column; gap: 4px; align-items: center; }
   .modal-card { padding: 22px 18px 24px; }
 }
@@ -828,6 +891,11 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
 @media (hover: none) {
   .stepper button { width: 18px; height: 20px; }
   .icon-btn { width: 24px; height: 24px; }
+  /* уголки превью (крестик/бейдж выбора/обрезка/поиск фото) — 18px мышью
+     попасть легко, пальцем нет; увеличиваем зону и сам кружок */
+  .frame .remove-photo, .frame .select-badge, .frame .edit-trim, .frame .find-photo {
+    width: 24px; height: 24px;
+  }
 }
 
 /* --- очень широкий экран: не растягиваем бесконечно */

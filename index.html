@@ -6,6 +6,11 @@
 <title>Card Maker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0dac67">
+<link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj4KPHJlY3Qgd2lkdGg9IjUxMiIgaGVpZ2h0PSI1MTIiIGZpbGw9IiMwZGFjNjciLz4KPHJlY3QgeD0iMTc2IiB5PSIxMjAiIHdpZHRoPSIyMjAiIGhlaWdodD0iMjIwIiByeD0iMjgiIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC41NSIvPgo8cmVjdCB4PSIxMTYiIHk9IjE4MCIgd2lkdGg9IjIyMCIgaGVpZ2h0PSIyMjAiIHJ4PSIyOCIgZmlsbD0iI2ZmZmZmZiIvPgo8L3N2Zz4K">
+<link rel="apple-touch-icon" href="data:image/png;base64,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">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Card Maker">
 <script>
 // применяем сохранённый выбор темы до отрисовки CSS, чтобы не мелькала не та тема
 try {
@@ -584,6 +589,43 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
   transition: width .15s ease;
 }
 
+/* --------------------------------------------- баннер «на экран Домой» */
+
+.install-banner {
+  position: fixed;
+  left: 50%;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: calc(100vw - 24px);
+  width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .14);
+  padding: 10px 12px;
+}
+.install-banner[hidden] { display: none; }
+.install-banner span {
+  flex: 1;
+  font: 500 11px/1.4 var(--ui);
+  color: var(--ink);
+}
+.install-banner .btn-green { flex: none; height: 28px; padding: 0 12px; font-size: 10.5px; }
+.install-banner-close {
+  flex: none;
+  width: 22px; height: 22px;
+  border: 0; border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.install-banner-close:hover { color: var(--ink); }
+
 /* -------------------------------------------------------- нижняя панель */
 
 .bar {
@@ -627,6 +669,13 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
   inset: 0;
   background: rgba(20, 28, 36, .38);
   display: grid;
+  /* без явного grid-template-columns одна неявная колонка сама подстраивается
+     под содержимое .modal-card (т.к. place-items:center не растягивает её) —
+     тогда max-width:100% у карточки считается от этой же самопроизвольной
+     ширины и ничего не ограничивает. minmax(0, 1fr) привязывает колонку
+     к реальной ширине .modal, иначе на узком экране карточка вылезает
+     за пределы viewport (видно только на мобильном, на десктопе не заметно). */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   z-index: 60;
   padding: 24px;
@@ -827,18 +876,37 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
 
 /* --- телефон */
 @media (max-width: 560px) {
-  body { padding: 12px 8px 132px; }
+  /* .page-footer ниже переходит в обычный поток (position: static) — без
+     column тут он всплыл бы вторым элементом в ряд рядом с .workspace
+     (body — flex-контейнер), а не строкой под ним */
+  body { padding: 12px 8px 132px; flex-direction: column; align-items: center; }
   .panel { border-radius: 12px; }
   .panel-previews { padding: 8px; }
   .panel-editor, .panel-tools { padding: 14px 10px; }
   .field { padding: 0 12px 0 14px; }
   .control-row { flex-wrap: wrap; }
   .control, .align-group { min-width: 110px; }
-  .bar { gap: 6px; padding: 8px 10px; }
-  .bar button { width: 32px; height: 32px; }
-  .bar button svg { width: 32px; height: 32px; }
-  .bar button.small svg { width: 27px; height: 27px; }
+
+  /* Бар с ~20 кнопками не вмещается в один ряд на телефоне — вместо переноса
+     в высокий блок в несколько рядов (перекрывал бы контент) даём один ряд
+     с горизонтальной прокруткой: компактно по высоте, всё так же доступно. */
+  .bar {
+    left: 8px; right: 8px; bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    transform: none;
+    max-width: none;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    gap: 6px; padding: 6px 10px;
+  }
+  .bar::-webkit-scrollbar { display: none; }
+  .bar button { width: 40px; height: 40px; }
+  .bar button svg { width: 34px; height: 34px; }
+  .bar button.small svg { width: 29px; height: 29px; }
   .bar .sep { display: none; }
+
   .page-footer { position: static; padding: 14px 4px 0; flex-direction: column; gap: 4px; align-items: center; }
   .modal-card { padding: 22px 18px 24px; }
 }
@@ -847,6 +915,11 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
 @media (hover: none) {
   .stepper button { width: 18px; height: 20px; }
   .icon-btn { width: 24px; height: 24px; }
+  /* уголки превью (крестик/бейдж выбора/обрезка/поиск фото) — 18px мышью
+     попасть легко, пальцем нет; увеличиваем зону и сам кружок */
+  .frame .remove-photo, .frame .select-badge, .frame .edit-trim, .frame .find-photo {
+    width: 24px; height: 24px;
+  }
 }
 
 /* --- очень широкий экран: не растягиваем бесконечно */
@@ -1038,6 +1111,13 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
     </div>
   </section>
 
+</div>
+
+<!-- ------------------------------------------- баннер «на экран Домой» -->
+<div class="install-banner" id="installBanner" hidden>
+  <span id="installBannerText"></span>
+  <button type="button" class="btn-green" id="installBannerAction" hidden>Установить</button>
+  <button type="button" class="install-banner-close" id="installBannerClose" aria-label="Скрыть">✕</button>
 </div>
 
 <!-- --------------------------------------------------- нижняя панель -->
@@ -2186,6 +2266,85 @@ function toggleTheme() {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem(STORE_THEME, next); } catch { /* приватный режим — просто не запомнится */ }
   syncThemeButton();
+}
+
+/* ------------------------------------------------ установка на телефон */
+/*
+ * Приложение уже полноценный PWA (manifest.webmanifest + service-worker.js,
+ * см. CLAUDE.md) — Android/Chrome сам предлагает установку через системное
+ * UI, но по умолчанию хочет своего повода (не сразу при первом заходе) и
+ * многие просто не замечают этой возможности. iOS вообще не имеет
+ * программного API установки — там единственный путь: Поделиться → «На
+ * экран «Домой»», и без подсказки почти никто об этом не знает. Баннер
+ * ниже — единая точка входа для обоих случаев: на Android перехватывает
+ * `beforeinstallprompt` и показывает свою кнопку «Установить», на iOS —
+ * просто текстовую инструкцию (кнопки там нет и быть не может). Не
+ * показывается повторно, если уже установлено (display-mode: standalone)
+ * или если его один раз закрыли (запоминается в localStorage).
+ */
+const STORE_INSTALL_DISMISSED = 'cardmaker.installDismissed.v1';
+let deferredInstallPrompt = null;
+
+function isStandaloneDisplay() {
+  return Boolean(
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) ||
+    window.navigator.standalone   // старое свойство Safari на iOS
+  );
+}
+
+/* iPadOS с версии 13 представляется как обычный Mac (platform === 'MacIntel'),
+   отличить от настоящего Mac можно только по наличию тачскрина. */
+function isIosDevice() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function hideInstallBanner() {
+  document.getElementById('installBanner').hidden = true;
+}
+
+function dismissInstallBanner() {
+  hideInstallBanner();
+  try { localStorage.setItem(STORE_INSTALL_DISMISSED, '1'); } catch { /* не критично */ }
+}
+
+function showInstallBanner(mode) {
+  const banner = document.getElementById('installBanner');
+  const text = document.getElementById('installBannerText');
+  const action = document.getElementById('installBannerAction');
+  if (mode === 'ios') {
+    text.textContent = 'Установи на телефон: нажми «Поделиться» внизу браузера → «На экран «Домой»».';
+    action.hidden = true;
+  } else {
+    text.textContent = 'Установи это приложение на телефон — иконка на рабочем столе, работает офлайн.';
+    action.hidden = false;
+  }
+  banner.hidden = false;
+}
+
+function wireInstallBanner() {
+  let dismissed = false;
+  try { dismissed = localStorage.getItem(STORE_INSTALL_DISMISSED) === '1'; } catch { /* не критично */ }
+  if (dismissed || isStandaloneDisplay()) return;
+
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();   // гасим стандартный мини-баннер браузера — показываем свой, единообразный
+    deferredInstallPrompt = e;
+    showInstallBanner('android');
+  });
+
+  if (isIosDevice()) showInstallBanner('ios');
+
+  document.getElementById('installBannerAction').addEventListener('click', async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    hideInstallBanner();
+  });
+  document.getElementById('installBannerClose').addEventListener('click', dismissInstallBanner);
+  // приложение реально установили (через наш баннер или системный путь) — прятать больше незачем
+  window.addEventListener('appinstalled', hideInstallBanner);
 }
 
 /* --------------------------------------------------------- режим фокуса */
@@ -4546,6 +4705,13 @@ const HELP = [
    'и текущая карточка, без лишнего вокруг. Повторное нажатие или Escape ' +
    'возвращают обычный вид. Фото, видео и настройки при этом никуда ' +
    'не деваются — режим чисто визуальный.'],
+  ['Установка на телефон',
+   'Приложение можно сохранить как иконку на рабочем столе и открывать ' +
+   'без браузерной строки адреса, как обычное приложение. На Android ' +
+   'сверху появится баннер с кнопкой «Установить»; на iPhone/iPad такой ' +
+   'кнопки не бывает — там баннер просто подсказывает путь: «Поделиться» ' +
+   'внизу экрана → «На экран «Домой»». Уже установленным — работает ' +
+   'и без интернета (кроме поиска фото в интернете, ему всегда нужна сеть).'],
 ];
 
 function openHelp() {
@@ -5242,6 +5408,7 @@ async function start() {
   setupPanelResize();
   syncUndoButtons();
   syncSelectionUI();
+  wireInstallBanner();
 
   try {
     await Promise.all([

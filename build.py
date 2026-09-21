@@ -162,12 +162,31 @@ def main() -> int:
         bundled += f"  {key}: {js_value},\n"
     bundled += "};\n"
 
+    # ---------- иконка приложения: SVG как favicon (поддерживается везде,
+    # кроме совсем старых браузеров), а для apple-touch-icon нужен именно
+    # PNG — iOS Safari исторически ненадёжно растеризует SVG для значка на
+    # экране «Домой». pwa-icon-180.png — заранее подготовленный растр той же
+    # картинки (см. brand/ПОЛОЖИ_СЮДА_ФАЙЛЫ.txt), не генерируется на лету,
+    # чтобы не тянуть в сборку зависимость-рендерer SVG→PNG.
+    icon_svg = BRAND / "pwa-icon.svg"
+    icon_png = BRAND / "pwa-icon-180.png"
+    favicon_url = data_url(icon_svg) if icon_svg.exists() else ""
+    if icon_png.exists():
+        apple_icon_url = data_url(icon_png)
+    elif icon_svg.exists():
+        print(f"  ! нет {icon_png.name} — apple-touch-icon будет из SVG (хуже на части iOS)")
+        apple_icon_url = favicon_url
+    else:
+        apple_icon_url = ""
+
     # ---------- сборка
     html = (SRC / "index.template.html").read_text(encoding="utf-8")
     html = html.replace("__FONT_FACES__", faces)
     html = html.replace("__CSS__", (SRC / "styles.css").read_text(encoding="utf-8"))
     html = html.replace("__BUNDLED_BRAND__", bundled)
     html = html.replace("__ICONS__", collect_icons())
+    html = html.replace("__FAVICON__", favicon_url)
+    html = html.replace("__APPLE_TOUCH_ICON__", apple_icon_url)
     html = html.replace("__RENDER_JS__", (SRC / "render.js").read_text(encoding="utf-8"))
     html = html.replace("__EDITOR_JS__", (SRC / "editor.js").read_text(encoding="utf-8"))
     html = html.replace("__APP_JS__", (SRC / "app.js").read_text(encoding="utf-8"))
@@ -182,7 +201,6 @@ def main() -> int:
     print(f"\nготово: {OUT.name}  ({OUT.stat().st_size / 1024:.0f} КБ)")
 
     # ---------- PWA: манифест (иконка внутри как data URI) и сервис-воркер рядом
-    icon_svg = BRAND / "pwa-icon.svg"
     manifest_path = HERE / "manifest.webmanifest"
     sw_path = HERE / "service-worker.js"
     if icon_svg.exists():

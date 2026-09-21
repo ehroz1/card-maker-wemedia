@@ -52,20 +52,36 @@ suite to run in CI.
 
 The build (`build.py`) is a pure string-templating step: it reads
 `src/index.template.html` and replaces placeholder tokens
-(`__FONT_FACES__`, `__CSS__`, `__BUNDLED_BRAND__`, `__ICONS__`, `__RENDER_JS__`,
-`__EDITOR_JS__`, `__APP_JS__`) with the corresponding processed content, then
-writes `index.html`. It fails loudly if any token is left unsubstituted. Font
-files from `brand/fonts/` are subset and converted to woff2 (via fontTools, if
-installed) and inlined as `@font-face` data URIs; logos from `brand/` are
-inlined as data URIs; icons from `brand/icons/*.svg` become a JS `ICONS` object
-keyed by filename stem. It then does the same substitution for
-`src/manifest.template.json` (the one token, `__PWA_ICON__`, becomes a data URI
-of `brand/pwa-icon.svg`) and writes it as `manifest.webmanifest`, and copies
-`src/service-worker.js` to the output root verbatim (no templating — it's
-generic app-shell caching, nothing brand-specific to substitute). **Always edit
-`src/`, `brand/`, or `build.py` — never
-edit `index.html` directly**, since it's a generated artifact that gets
-overwritten on the next build.
+(`__FONT_FACES__`, `__CSS__`, `__BUNDLED_BRAND__`, `__ICONS__`, `__FAVICON__`,
+`__APPLE_TOUCH_ICON__`, `__RENDER_JS__`, `__EDITOR_JS__`, `__APP_JS__`) with
+the corresponding processed content, then writes `index.html`. It fails
+loudly if any of the first four (font/CSS/brand/icons) tokens is left
+unsubstituted — the two icon `<head>` tokens degrade instead of failing the
+build (see below), since a missing icon shouldn't block shipping the app.
+Font files from `brand/fonts/` are subset and converted to woff2 (via
+fontTools, if installed) and inlined as `@font-face` data URIs; logos from
+`brand/` are inlined as data URIs; icons from `brand/icons/*.svg` become a JS
+`ICONS` object keyed by filename stem. `__FAVICON__` is `brand/pwa-icon.svg`
+inlined as a data URI (SVG favicons work in every browser this app targets);
+`__APPLE_TOUCH_ICON__` prefers a pre-rendered `brand/pwa-icon-180.png` over
+the SVG — iOS Safari has long been unreliable at rasterizing SVG for the
+home-screen icon specifically (unlike the favicon or the manifest icon,
+where Android/Chrome's SVG support is fine), so a real PNG is the safe
+choice there. `pwa-icon-180.png` is a checked-in binary asset, not generated
+by `build.py` (no SVG-rasterizer dependency was worth adding for a single
+static icon) — it was produced once by screenshotting `pwa-icon.svg` at
+180×180 with headless Chromium; regenerate it by hand the same way if
+`pwa-icon.svg` ever changes, `build.py` will only warn (not fail) if it's
+stale or missing, falling back to the SVG. It then does the same
+`__PWA_ICON__` substitution for `src/manifest.template.json` (also
+`brand/pwa-icon.svg` as a data URI — the manifest icon and the favicon are
+the same source image, substituted independently since they're two
+different template files) and writes it as `manifest.webmanifest`, and
+copies `src/service-worker.js` to the output root verbatim (no templating —
+it's generic app-shell caching, nothing brand-specific to substitute).
+**Always edit `src/`, `brand/`, or `build.py` — never edit `index.html`
+directly**, since it's a generated artifact that gets overwritten on the
+next build.
 
 Runtime code is split into three plain scripts (no modules/bundler, concatenated
 by the build into one `<script>` tag, sharing globals):
@@ -345,6 +361,57 @@ accents (`--green`, the amber `--warn`) and `--on-accent` (always `#fff`, for
 text/glyphs drawn on top of a permanently-colored surface like `.btn-green` or
 the multi-select checkmark badge) — using the wrong one is the easiest way to
 end up with invisible text after a theme edit.
+
+**Mobile layout** builds on the responsive CSS that already existed
+(`@media (max-width: 1000px)` stacks the three panels; `@media (max-width:
+560px)` is the phone tier) rather than replacing it. Two real, previously
+unnoticed bugs were found and fixed while testing this at actual phone
+viewport widths (desktop-only manual testing had never caught either):
+(1) `.modal { display: grid; place-items: center }` had no
+`grid-template-columns`, so the single implicit column sized itself to the
+modal card's own unconstrained `width: 560px` — `max-width: 100%` on the
+card then resolved against that same self-sized column and constrained
+nothing, so every modal (Help, stock-photo search, video trim) silently
+overflowed the viewport on narrow screens with no visible scrollbar cue,
+pushing close buttons and controls off-screen. Fixed by adding
+`grid-template-columns: minmax(0, 1fr)`, which ties the column to the
+modal's actual (viewport-derived) width instead of the item's preferred
+size — a general trap with centered (non-stretched) grid/flex items and
+worth remembering for any future modal-like component. (2) `.page-footer`
+switches from `position: fixed` to `position: static` under the 560px
+breakpoint (so it takes normal space instead of always overlapping page
+bottom), but `body` stayed `display: flex` in row direction, so the footer
+became a *second row-flex sibling* next to `.workspace` instead of a line
+below it — visually, the footer text landed squeezed into the top-right
+corner. Fixed with `body { flex-direction: column }` under the same
+breakpoint. Separately (not a bug, a deliberate change): the bottom `.bar`
+has ~20 buttons, which wrapped into a tall multi-row block on phone widths
+that visibly covered page content — changed to a single non-wrapping row
+with `overflow-x: auto` (native horizontal swipe/scroll) under the phone
+breakpoint instead, keeping the bar's height to one row; button and frame
+corner-control (`remove-photo`/`select-badge`/`edit-trim`/`find-photo`)
+touch targets were also bumped up under `@media (hover: none)`, since their
+desktop sizes (16–18px) are too small to reliably tap.
+
+**Installing to the home screen** was already technically possible before
+this (manifest + service worker satisfy Chrome/Android's installability
+criteria) but undiscoverable — Chrome/Android's own install affordance is
+tucked into a menu and won't offer itself on a first visit, and iOS Safari
+has no install-prompt API at all (the only path is Share → "Add to Home
+Screen", which nothing on the page ever mentioned). `wireInstallBanner()`
+in app.js adds a single dismissible in-app banner (`#installBanner`) that
+covers both cases from one code path: on Android/Chrome it listens for
+`beforeinstallprompt`, calls `preventDefault()` to suppress the browser's
+own mini-infobar, stashes the event, and shows a real "Установить" button
+that calls the saved event's `.prompt()` when clicked; on iOS
+(`isIosDevice()` — iPadOS 13+ reports as `platform: 'MacIntel'` like a real
+Mac, distinguished only by `maxTouchPoints > 1`) there is no such event, so
+the banner instead just shows static instructions, with no action button
+(there is nothing to programmatically trigger). The banner never shows at
+all if `isStandaloneDisplay()` is already true (`display-mode: standalone`
+media query, or `navigator.standalone` — the old iOS Safari property) or if
+the user already dismissed it once (`cardmaker.installDismissed.v1` in
+localStorage) — it's meant to be seen once, not nagged.
 
 Compatibility constraints baked into the code (see README.md "Совместимость"):
 letter-spacing falls back to manual per-character drawing when

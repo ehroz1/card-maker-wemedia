@@ -6,6 +6,11 @@
 <title>Card Maker</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#0dac67">
+<link rel="icon" href="__FAVICON__">
+<link rel="apple-touch-icon" href="__APPLE_TOUCH_ICON__">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Card Maker">
 <script>
 // применяем сохранённый выбор темы до отрисовки CSS, чтобы не мелькала не та тема
 try {
@@ -198,6 +203,13 @@ __CSS__
     </div>
   </section>
 
+</div>
+
+<!-- ------------------------------------------- баннер «на экран Домой» -->
+<div class="install-banner" id="installBanner" hidden>
+  <span id="installBannerText"></span>
+  <button type="button" class="btn-green" id="installBannerAction" hidden>Установить</button>
+  <button type="button" class="install-banner-close" id="installBannerClose" aria-label="Скрыть">✕</button>
 </div>
 
 <!-- --------------------------------------------------- нижняя панель -->
