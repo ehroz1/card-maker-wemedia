@@ -393,6 +393,28 @@ corner-control (`remove-photo`/`select-badge`/`edit-trim`/`find-photo`)
 touch targets were also bumped up under `@media (hover: none)`, since their
 desktop sizes (16–18px) are too small to reliably tap.
 
+**Bottom bar as a dock**: on desktop the `.bar` never wraps
+(`flex-wrap: nowrap`). Icon size is a CSS variable, `--dock-size`
+(default 32px). `fitDock()` in app.js recomputes it on resize from the
+real button/separator count and the bar's computed gap/padding, down to
+`DOCK_MIN`, so the row shrinks instead of wrapping. Don't hardcode a
+button count in CSS. `wireDock()` adds macOS-dock magnification, a vanilla
+port of the idea behind Aceternity's React/framer-motion `FloatingDock`
+(there's no React or framer-motion here): each button's target size falls
+off with a cosine over `DOCK_RANGE` px from the cursor, and a rAF loop
+eases the current size toward it. The loop reads every rect before writing
+any size, to avoid layout thrash. The bar has a fixed height with
+`align-items: flex-end`, so magnified icons grow upward past the bar
+instead of resizing it. Inline sizes are removed once an icon settles back
+to base. Tooltips (`.dock-tip`) replace native `title`: on each hover the
+button's `title` moves to `data-tip`/`aria-label`, re-done on every hover
+because `syncThemeButton()` rewrites the theme button's `title`.
+Magnification only runs for `(hover: hover) and (pointer: fine)` above the
+phone breakpoint (`DOCK_PHONE_MAX_WIDTH`, which must match the 560px phone
+tier in styles.css), and it's skipped under `prefers-reduced-motion`. The
+phone tier keeps its own fixed 40px, horizontally scrolling row and hides
+`.dock-tip`.
+
 **Installing to the home screen** was already technically possible before
 this (manifest + service worker satisfy Chrome/Android's installability
 criteria) but undiscoverable — Chrome/Android's own install affordance is

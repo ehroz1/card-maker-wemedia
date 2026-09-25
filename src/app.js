@@ -232,6 +232,141 @@ function wireInstallBanner() {
   window.addEventListener('appinstalled', hideInstallBanner);
 }
 
+/* --------------------------------------------------- нижняя панель: док */
+/*
+ * Панель всегда в один ряд: если иконки размера по умолчанию не влезают
+ * в окно, fitDock() уменьшает --dock-size (не меньше DOCK_MIN), а не
+ * переносит ряд. На телефоне (≤560px) у панели свой режим — ряд с
+ * прокруткой и фиксированным размером (см. styles.css), fitDock там не
+ * вмешивается.
+ *
+ * wireDock() — увеличение иконок под курсором, как в доке macOS: каждая
+ * иконка растёт тем сильнее, чем ближе к ней курсор (косинусный спад на
+ * DOCK_RANGE пикселей), размер догоняет цель плавно (DOCK_EASE за кадр),
+ * поэтому соседи раздвигаются мягко. Только для мыши (на тач-экранах
+ * наведения нет) и не при prefers-reduced-motion — подписи над иконками
+ * при этом остаются.
+ */
+const DOCK_MIN = 24, DOCK_MAX = 32;
+const DOCK_MAGNIFY = 1.55;   // во сколько раз растёт иконка прямо под курсором
+const DOCK_RANGE = 110;      // на каком расстоянии от курсора (px) соседи ещё растут
+const DOCK_EASE = 0.22;
+const DOCK_PHONE_MAX_WIDTH = 560;   // тот же брейкпоинт, что «телефон» в styles.css
+
+function fitDock() {
+  const bar = document.querySelector('.bar');
+  if (window.innerWidth <= DOCK_PHONE_MAX_WIDTH) { bar.style.removeProperty('--dock-size'); return; }
+  const cs = getComputedStyle(bar);
+  const buttons = bar.querySelectorAll('button').length;
+  const seps = bar.querySelectorAll('.sep').length;
+  const gap = parseFloat(cs.columnGap) || 0;
+  const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) +
+    parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+  const available = window.innerWidth - 24 - chrome - gap * (buttons + seps - 1) - seps;
+  const size = Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.floor(available / buttons)));
+  bar.style.setProperty('--dock-size', size + 'px');
+}
+
+function wireDock() {
+  const bar = document.querySelector('.bar');
+  const buttons = [...bar.querySelectorAll('button')];
+  const tip = document.createElement('div');
+  tip.className = 'dock-tip';
+  tip.setAttribute('aria-hidden', 'true');
+  bar.appendChild(tip);
+
+  const mq = q => (window.matchMedia ? window.matchMedia(q) : { matches: false });
+  const finePointer = mq('(hover: hover) and (pointer: fine)');
+  const reducedMotion = mq('(prefers-reduced-motion: reduce)');
+  const active = () => finePointer.matches && window.innerWidth > DOCK_PHONE_MAX_WIDTH;
+  const baseSize = () => parseFloat(getComputedStyle(bar).getPropertyValue('--dock-size')) || DOCK_MAX;
+
+  let mouseX = null;
+  let hovered = null;
+  let raf = null;
+  const sizes = new Map();   // текущий (анимированный) размер иконки, пока он отличается от базового
+
+  const placeTip = () => {
+    if (!hovered) return;
+    tip.style.left = (hovered.offsetLeft + hovered.offsetWidth / 2) + 'px';
+    tip.style.bottom = (bar.clientHeight - hovered.offsetTop + 8) + 'px';
+  };
+
+  const tick = () => {
+    raf = null;
+    const base = baseSize();
+    // сначала все замеры, потом все записи — иначе каждая запись размера
+    // сбрасывала бы раскладку перед следующим замером
+    const centers = buttons.map(btn => {
+      const r = btn.getBoundingClientRect();
+      return r.left + r.width / 2;
+    });
+    let moving = false;
+    buttons.forEach((btn, i) => {
+      let target = base;
+      if (mouseX !== null && !reducedMotion.matches) {
+        const d = Math.abs(mouseX - centers[i]);
+        if (d < DOCK_RANGE) {
+          target = base * (1 + (DOCK_MAGNIFY - 1) * (Math.cos(d / DOCK_RANGE * Math.PI) + 1) / 2);
+        }
+      }
+      const cur = sizes.has(btn) ? sizes.get(btn) : base;
+      let next = cur + (target - cur) * DOCK_EASE;
+      if (Math.abs(target - next) < 0.3) next = target;
+      else moving = true;
+      if (Math.abs(next - base) < 0.01) {
+        sizes.delete(btn);
+        btn.style.width = '';
+        btn.style.height = '';
+      } else {
+        sizes.set(btn, next);
+        btn.style.width = next + 'px';
+        btn.style.height = next + 'px';
+      }
+    });
+    placeTip();
+    if (moving) raf = requestAnimationFrame(tick);
+  };
+  const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
+
+  buttons.forEach(btn => {
+    btn.addEventListener('mouseenter', () => {
+      if (!active()) return;
+      // системный title показал бы вторую подсказку поверх нашей — переносим
+      // его текст в data-tip при каждом наведении (кнопка темы меняет title
+      // сама, см. syncThemeButton, поэтому один раз на старте недостаточно)
+      if (btn.title) {
+        btn.dataset.tip = btn.title;
+        btn.setAttribute('aria-label', btn.title);
+        btn.removeAttribute('title');
+      }
+      hovered = btn;
+      tip.textContent = btn.dataset.tip || '';
+      tip.classList.toggle('show', Boolean(tip.textContent));
+      placeTip();
+    });
+    btn.addEventListener('mouseleave', () => {
+      if (hovered !== btn) return;
+      hovered = null;
+      tip.classList.remove('show');
+    });
+  });
+
+  bar.addEventListener('mousemove', e => {
+    if (!active()) return;
+    mouseX = e.clientX;
+    kick();
+  });
+  bar.addEventListener('mouseleave', () => {
+    mouseX = null;
+    hovered = null;
+    tip.classList.remove('show');
+    kick();
+  });
+  window.addEventListener('resize', () => { fitDock(); kick(); });
+  fitDock();
+}
+
 /* --------------------------------------------------------- режим фокуса */
 /*
  * Прячет панель типографики и все карточки в превью, кроме выбранной (см.
@@ -3294,6 +3429,7 @@ async function start() {
   syncUndoButtons();
   syncSelectionUI();
   wireInstallBanner();
+  wireDock();
 
   try {
     await Promise.all([

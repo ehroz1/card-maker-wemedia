@@ -604,23 +604,31 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
 
 /* -------------------------------------------------------- нижняя панель */
 
+/*
+ * Док: всегда один ряд. Размер иконки — переменная --dock-size, fitDock()
+ * в app.js уменьшает её (до 24px), если ряд не влезает в окно, вместо
+ * переноса на вторую строку. Высота панели фиксирована, иконки прижаты
+ * к низу — при наведении (wireDock) они растут вверх, за пределы панели,
+ * как в доке macOS, не раздувая саму панель.
+ */
 .bar {
+  --dock-size: 32px;
   position: fixed;
   left: 50%;
-  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
   transform: translateX(-50%);
   max-width: calc(100vw - 24px);
-  min-height: 56px;
-  flex-wrap: wrap;
+  height: calc(var(--dock-size) + 16px);
+  flex-wrap: nowrap;
   justify-content: center;
   background: var(--white);
   border: 1px solid var(--border);
-  border-radius: 15px;
+  border-radius: 14px;
   box-shadow: 0 4px 10.1px rgba(0, 0, 0, .14);
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 15px;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 0 10px 8px;
   z-index: 30;
 }
 .bar button {
@@ -628,15 +636,39 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
   padding: 0; cursor: pointer;
   border-radius: 5px;
   display: grid; place-items: center;
-  width: 36px; height: 36px;
+  width: var(--dock-size); height: var(--dock-size);
   flex: none;
 }
-.bar button svg { display: block; width: 36px; height: 36px; }
-.bar button.small svg { width: 30px; height: 30px; }
+.bar button svg { display: block; width: 100%; height: 100%; }
+.bar button.small svg { width: 84%; height: 84%; }
 .bar button:hover { filter: brightness(.94); }
 .bar button:disabled { opacity: .35; cursor: default; pointer-events: none; }
 .bar button.active { box-shadow: 0 0 0 2px var(--green); border-radius: 7px; }
-.bar .sep { width: 1px; height: 26px; background: var(--border); flex: none; }
+.bar .sep {
+  width: 1px; flex: none;
+  height: calc(var(--dock-size) * .7);
+  margin-bottom: calc(var(--dock-size) * .15);
+  background: var(--border);
+}
+
+/* подпись над иконкой при наведении — вместо системного title */
+.dock-tip {
+  position: absolute;
+  left: 0; bottom: 100%;
+  transform: translate(-50%, 4px);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--white);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font: 500 11px/1.2 var(--ui);
+  white-space: nowrap;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease;
+}
+.dock-tip.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* -------------------------------------------------------------- меню */
 
@@ -875,13 +907,15 @@ body.focus-mode .panel-previews .preview-item:not(:has(.frame.selected)) { displ
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    height: auto;
+    align-items: center;
     gap: 6px; padding: 6px 10px;
   }
   .bar::-webkit-scrollbar { display: none; }
+  .bar .sep, .dock-tip { display: none; }
   .bar button { width: 40px; height: 40px; }
   .bar button svg { width: 34px; height: 34px; }
   .bar button.small svg { width: 29px; height: 29px; }
-  .bar .sep { display: none; }
 
   .page-footer { position: static; padding: 14px 4px 0; flex-direction: column; gap: 4px; align-items: center; }
   .modal-card { padding: 22px 18px 24px; }
