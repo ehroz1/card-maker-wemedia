@@ -112,35 +112,111 @@ by the build into one `<script>` tag, sharing globals):
   marker text plus an occurrence count — and stored in `state.photosById`/
   `state.cardStylesById`/`state.transformsById`; `state.cardIds` holds the keys
   for the current `state.cards`, parallel by index, so UI code that operates
-  positionally (selection, drag/pinch/wheel handlers, `setPhoto`) can look up
-  the right bucket via `state.cardIds[i]`. This exists specifically so that
+  positionally (slide selection, stage pan/pinch/wheel, `setPhoto`) can look
+  up the right bucket via `state.cardIds[i]`. This exists specifically so that
   inserting or deleting a card earlier in the text doesn't reassign another
   card's photo/zoom/style to the wrong card — don't reintroduce positional
   (`array[i]`) storage for anything per-card that must outlive a `syncCards()`
-  call. Manual per-card style overrides (`state.cardStylesById`, `coverStyles`)
-  override the `LAYOUTS` defaults, applied via `effectiveStyle`/
-  `applyStylePatch`; rendering is scheduled/debounced through
-  `scheduleRender()`/`renderAll()` rather than called directly from input
-  handlers; `saveProject`/`loadProject` persist text/settings (not photos) to
-  `localStorage` under `cardmaker.project.v3` / `cardmaker.templates.v2` —
-  bump the version suffix if the stored shape changes incompatibly.
-  `state.templates` (named, switchable via the **Шаблоны проекта** menu,
-  `templatesMenu`) originally only held brand assets (`logo`/`logoDark`/
-  `gradient`) but now also carries each template's own cover title/subtitle
-  kegl and `coverStyles` (`coverTitleSize`/`coverBodySize`/`coverStyles` per
-  entry) — `syncTemplateDesign()` writes the active document's current cover
-  sizing into the active template on every change, `applyTemplateDesign()`
-  reads it back out when switching templates. Keep both in sync when adding
-  more per-template design fields — a new field needs to flow through both
-  functions plus the "Новый шаблон…" seeding and "Вернуть логотипы по
-  умолчанию" merge (which must preserve fields it isn't touching, not
-  overwrite the whole template object).
+  call. The flip side: any operation that *rewrites markers on purpose*
+  (toggling «Фото на карточке» turns `//3` into `//3-`; `moveCard` reorders
+  blocks and may give the unmarked preamble block a marker) changes keys, so
+  it must carry the buckets over with `remapCardKeys(oldKeys, newKeys)` —
+  see the blocks model below. Manual per-card style overrides
+  (`state.cardStylesById`, `coverStyles`) override the `LAYOUTS` defaults,
+  applied via `targetStyle`/`applyStylePatch`; rendering is
+  scheduled/debounced through `scheduleRender()`/`renderAll()` rather than
+  called directly from input handlers.
+  **Drafts**: every project is a draft in `localStorage` under
+  `cardmaker.drafts.v1` (a list, newest first, capped at `MAX_DRAFTS` = 40):
+  `{id, name, createdAt, updatedAt, data}`, where `data` is `projectData()` —
+  text, cover, format, export settings, per-card styles, template name; never
+  photos/videos. `saveProject()` re-reads the list before every write
+  (read-modify-write, not an in-memory copy) so two tabs editing different
+  drafts don't clobber each other. The old single-project key
+  `cardmaker.project.v3` is migrated into the first draft by `readDrafts()`
+  on first run and left untouched. Media can't be persisted (too big for
+  `localStorage`), but `state.sessionMedia[draftId]` keeps each draft's
+  photos/videos/transforms in memory while the tab is open
+  (`stashSessionMedia`/`restoreSessionMedia`), so going home and reopening a
+  draft doesn't lose them; `hasAnyMedia()` drives the `beforeunload` prompt.
+  Bump the version suffix if the stored shape changes incompatibly; the
+  project file (`exportProjectFile`/`importProjectFile`) is the same
+  `projectData()` JSON, and importing opens it as a *new* draft.
+  **Templates** (`state.templates`, `cardmaker.templates.v2`, switched and
+  edited in the **Проект** tab — `renderProjectForm`) hold brand assets
+  (`logo`/`logoDark`/`gradient`) plus each template's cover title/subtitle
+  kegl and `coverStyles` (`coverTitleSize`/`coverBodySize`/`coverStyles`
+  per entry) — `syncTemplateDesign()` writes the active document's current
+  cover sizing into the active template on every change,
+  `applyTemplateDesign()` reads it back out when switching templates or
+  creating a draft. Keep both in sync when adding more per-template design
+  fields — a new field needs to flow through both functions plus
+  `newTemplate()` seeding and `resetLogos()` (which must merge — preserve
+  fields it isn't touching — not overwrite the whole template object).
 
 The carousel text markup (`//1` new card with photo fallback to white template,
 `//2-` photo-less card, `**bold**`, `_italic_`, blank line = spacer line, a
 fully-bold line = larger subtitle) is documented for end users in README.md and
 implemented across `parseCards` (render.js) and the markup⇄HTML conversion
-(editor.js) — keep both in sync when changing the format.
+(editor.js) — keep both in sync when changing the format. `splitBlocks`/
+`joinBlocks` in app.js (the per-card view of the same text, below) must also
+agree with `parseCards` on where a card starts — they share `MARKER_RE`'s
+idea of a marker line, and an unmarked non-empty preamble before the first
+marker is a card for both.
+
+**UI shell** (redesigned after the author's own edubridge project): two
+screens in one page, toggled by `showHome()`/`showEditor()` (`state.screen`).
+The **home** screen (`renderHome`) lists drafts with a live canvas preview of
+each draft's cover (`paintPreview`, drawn with that draft's own template
+assets) and three format tiles (`FORMAT_INFO`: 4:5 / 1:1 / 9:16), each with
+«Начать с примером» / «Пустой» → `createDraft(format, withSample)`. The
+**editor** is a topbar (back, editable `#docName`, undo/redo, focus mode,
+help, theme, **Экспорт** popover) over a three-column `.workspace`: slide
+list (`renderSlidesList`/`buildSlideItem` — thumbnails, per-item tools, drag
+to reorder, file drop), the stage (`#stageCanvas` + `#stageOverlay`,
+`wireStage` for pointer pan / pinch / wheel zoom / drop), and a side panel
+with three tabs (`setTab`: `slide` / `text` / `project`). Only the active tab
+is built; `refreshEditor()` re-renders it from `state` after any structural
+change, so forms never hold state of their own.
+
+**Hybrid text editing — the blocks model.** `state.cardsText` (the `//N`
+markup) stays the single source of truth for carousel text. The «Весь текст»
+tab edits it whole (`#cardsText`); the «Слайд» tab's `#cardEditor` edits
+only the current card's block. `splitBlocks(text)` → `{prefix, blocks}`
+where each block is `{marker, body[]}` (`marker: null` for an unmarked
+preamble; leading blank lines are `prefix`), and `joinBlocks` is its exact
+inverse (`joinBlocks(splitBlocks(t)) === t`). `cardBody(i)`/`setCardBody(i,
+markup)` read/write one block's body *minus/plus its trailing blank lines*,
+which are the visual separator in the whole-text view and belong to the
+gap, not the card. Both editors go through one abstraction — a *binding*
+`{kind, el, get, set}` (`wholeBinding()`/`cardBinding()`, resolved from the
+DOM with `bindingFor(node)`) — so paste, ⌘B/⌘I, the selection-size picker
+(`restyleSelection`) and `insertMarkup` are written once. `lastCaret`
+remembers the selection when focus moves to a toolbar button or the size
+`<select>`. While typing in the whole text, `followCaretCard()` selects the
+slide under the caret. Structural card ops (`addCard`, `duplicateCard`,
+`moveCard`, `deleteCard`, `setCardUsePhoto`) all work on blocks, then
+`commitCardsText()` (`syncCards` + `refreshEditor` + `saveProject`);
+`autoSplitText()` rewrites the whole text and ends the same way.
+
+**Checks under the stage** (`renderWarnings`): `renderCard()` returns
+`{overflow}`, which `paintCard` records per slide in `state.overflow` — shown
+as «Текст не помещается» plus a «Уместить» button and an amber dot on the
+slide's thumbnail. `autoFit(index)` shrinks kegl in 1% steps, re-running
+`renderCard` on a scratch canvas until it fits, never below `FIT_MIN_RATIO`
+(70%) of the `LAYOUTS` size — for the cover it scales title and subtitle
+together (template-level sizes, so it goes through `syncTemplateDesign`),
+for a card it patches that card's style override. `photoUpscale(card)`
+warns when the export would stretch a photo more than `UPSCALE_WARN`
+(1.25×); duplicate photos are detected by `findDuplicatePhotoOwner`.
+
+**Export** (`exportSlides(mode, onlyIndex)`, `mode` = `'zip'` | `'files'`,
+`onlyIndex` for «Только текущий слайд») lives in the topbar popover
+(`openExportPop`/`syncExportPop`; ⌘S runs `state.exportMode`). File names are
+ASCII on purpose: Chromium silently renames an `a.download` containing
+Cyrillic to `download`, so slides are `00-oblozhka`/`NN-kartochka` and the
+ZIP/project file names go through `fileSlug()` (Russian→Latin `TRANSLIT`
+table + slugify, with a fallback when nothing survives).
 
 **Video support** generalizes the existing photo pipeline rather than
 duplicating it: `state.photosById[id]` holds either an `HTMLImageElement` or
@@ -161,9 +237,9 @@ goes through `cloneMediaForDuplicate()` to create an independent `<video>`
 on the same source URL, which is why `duplicateCard` is `async`. Trim is
 asked immediately on upload — `setPhoto` awaits `askVideoTrim([{card, index}])`
 right after a video resolves — rather than gating export; the same modal
-reopens any time via the "✂" button `buildPreviews()` adds to video-card
-frames (`.edit-trim`), so export itself (`exportAll`) no longer blocks on a
-trim prompt, it just reads whatever is currently on `video.trimStart`/
+reopens any time via «Обрезать» in the stage overlay (`renderStageOverlay`
+adds a `.media-tools` pill over a video slide → `openTrimFor(index)`), so
+export itself (`exportSlides`) never blocks on a trim prompt, it just reads whatever is currently on `video.trimStart`/
 `trimEnd`. Inside `askVideoTrim`, the scrubber (`.vt-scrubber`, two
 pointer-dragged `.vt-handle`s) and the numeric fields write straight to
 `video.trimStart`/`trimEnd` as the user interacts — no separate draft state —
@@ -173,8 +249,8 @@ on Cancel. The same live `<video>` element is reparented into the modal
 (`videoWrap.appendChild(video)`) while open and detached again on close
 (`video.remove()`) rather than duplicating the source, since it's otherwise
 never in the DOM (only ever a `ctx.drawImage()` source). Playing a video's
-preview in its card thumbnail (the "▶" button `buildPreviews()` also adds)
-works the same way at a smaller scale: `toggleVideoPreviewPlayback` sets
+preview on the stage («Смотреть»/«Пауза» in the same overlay pill) works
+the same way at a smaller scale: `toggleVideoPreviewPlayback` sets
 `video._previewPlaying` and calls `.play()`, a `timeupdate` listener
 (`wirePreviewLoop`, shared between `fileToVideo()` and
 `cloneMediaForDuplicate()` so a duplicated video card's preview loops too —
@@ -186,7 +262,7 @@ races with it), and a shared
 `requestAnimationFrame` loop (`ensurePreviewPlayLoop`) calls `renderAll()`
 at a throttled ~25fps for as long as any card's video is playing, since the
 normal debounced `scheduleRender()` path only redraws on input, not
-continuously. `exportAll` calls `stopAllVideoPreviews()` first to guarantee
+continuously. `exportSlides` calls `stopAllVideoPreviews()` first to guarantee
 no preview loop is fighting a video mid-export. `exportVideoCard` re-draws
 `renderCard()` on every `requestAnimationFrame` while the source video plays
 through the trim window, captured via `canvas.captureStream()` +
@@ -208,8 +284,8 @@ Audio graph needed for this; that would only matter for mixing/volume
 control, not just passing audio through. The video element is *not*
 `.muted` by default any more (it was, back when export was silent and
 muting kept preview/export behavior visually consistent) — `fileToVideo()`
-leaves it unmuted so the preview ("▶" on the card, "▶ Просмотр" in the trim
-modal) is actually audible, and `exportVideoCard` mutes it only for the
+leaves it unmuted so the preview («Смотреть» on the stage, "▶ Просмотр" in
+the trim modal) is actually audible, and `exportVideoCard` mutes it only for the
 duration of its own recording (saves/restores `video.muted`) purely so a
 several-video export doesn't blast every clip's audio out the speakers at
 once. In Chrome/Firefox this local mute has no effect on
@@ -244,11 +320,31 @@ to the video-only path exactly as before — no error, no user-visible
 difference beyond the exported file being silent. An
 `onProgress(fraction)` callback threaded through `exportVideoCard` (driven
 by the same `timeupdate` listener that detects the trim end) feeds
-`updateExportProgress()`, which drives the thin bar under the Export button
+`updateExportProgress()`, which drives the thin bar in the export popover
 (`#exportProgress`/`#exportProgressBar`) — each card is an equal share of
 the bar, and a video card's share fills gradually instead of jumping.
 
-`exportAll` no longer processes cards with a single `for` loop: photo cards
+**MediaRecorder start/stop ordering in `exportVideoCard`** — measured in
+Chromium, don't "simplify" it back: the encoder (MP4 especially) only spins
+up once the canvas track delivers its first frame, and the `start` event
+arrives 0.3–1 s after that. (a) Calling `recorder.stop()` before `start` has
+fired produces a **0-byte file** — this is how short clips used to export
+empty — and stopping right after `start` still drops frames that hadn't
+reached the encoder (the file keeps one frame). So once the trim end is
+reached, `stop()` only pauses the video and sets `ended`; the actual
+`recorder.stop()` waits until `STOP_GRACE_MS` (300 ms) after `onstart`,
+while the rAF `draw` loop keeps feeding the (now static) last frame so the
+encoder keeps receiving frames. (b) Frames drawn *before* `start` fires are
+**not** lost — the file's timeline starts at the first frame — so playback
+starts immediately after `recorder.start()`, not in `onstart`. (c) Don't
+pre-draw a frame before `recorder.start()` "to wake the encoder" (edubridge
+does): the timeline would then start at that frame and the whole encoder
+spin-up would be baked into the file as a frozen first frame (a 1.47 s clip
+exported as ~2.6 s). Net effect verified: 1.47 s → 1.46 s, 5 s → 4.95 s,
+and a 0.37 s clip → ~0.46 s (full clip plus a short held tail) instead of
+empty. The `hardStopAt` guard still ends everything if `start` never comes.
+
+`exportSlides` doesn't process cards with a single `for` loop: photo cards
 all render concurrently via `Promise.all` (cheap, no reason to serialize),
 and video cards run through a small worker-pool (`VIDEO_EXPORT_CONCURRENCY`
 workers each pulling the next unprocessed video index off a shared
@@ -283,65 +379,18 @@ frame, not the full clip. Videos are never explicitly
 disposing photo `Image` objects (both can still be reachable from the undo
 stack).
 
-**Stock photo search** is the one place the app talks to the network at all —
-everything else is genuinely offline-capable. A "🔍" button
-`buildPreviews()` adds to every non-video frame (`.find-photo`, sharing its
-corner with `.edit-trim`/`.has-video` the same way `.find-photo`/`.edit-trim`
-are each other's complement via CSS) opens `#stockPhotoModal` via
-`openStockPhotoModal(index)`, which pre-fills the query from
-`stockQueryFor(index)` — the cover's title/body, or a card's first non-empty
-`line` with markup stripped (`stripMarkupForQuery`) — and kicks off
-`runStockSearch(true)`. `searchStockPhotos()` fans out to four source
-functions in parallel (`searchPixabay`/`searchPexels`/`searchUnsplash`/
-`searchOpenverse`), each normalizing its provider's very different response
-shape into `{id, thumb, full, width, height, source, credit, creditUrl}`
-(plus `downloadLocation`, Unsplash-only — see below), then
-round-robin-interleaves whatever came back so the grid mixes sources instead
-of listing one provider's results before the next. None of the four
-functions ever throws — network/parse errors are caught and turned into an
-empty array — so `Promise.all` in `searchStockPhotos()` never needs
-`allSettled`, and one provider being down or unconfigured just thins the
-results rather than breaking the search. `PIXABAY_API_KEY`/`PEXELS_API_KEY`/
-`UNSPLASH_ACCESS_KEY` are placeholder strings (`'ВАШ_КЛЮЧ_...'`) that ship
-unset; each search function checks for the placeholder prefix and returns
-`[]` immediately rather than firing a request that can only 401 — all three
-keys are free (no card) from pixabay.com/api, pexels.com/api and
-unsplash.com/developers, and need to be pasted into these constants before
-rebuilding for that source to participate. Unsplash's demo-tier key is
-capped at 50 requests/hour (its own quota, separate from Pixabay/Pexels) —
-raising that needs applying for Production access on
-unsplash.com/oauth/applications, a manual review, not something this repo
-can do for the user. Openverse needs no key (anonymous requests, tighter
-per-IP rate limit) and works out of the box. Unlike Pixabay/Pexels/Unsplash
-— all three blanket-licensed for commercial use — Openverse aggregates
-mixed Creative Commons licenses, so its query pins `license=cc0,pdm,by,by-sa`
-and the response filter drops anything without both `width`/`height`
-reported (can't verify the `STOCK_MIN_SIZE` floor otherwise) — deliberately
-not `by-nc`/`by-nd` variants, since the app always composites text/logo
-over the photo, which is a derivative use an ND license forbids regardless
-of the NC question. Clicking a result thumbnail (`insertStockPhoto`) closes
-the modal, fetches `result.full` and hands the response `Blob` straight to
-the existing `setPhoto(index, blob)` — no new image-loading path needed,
-since `fileToImage()` already reads via `FileReader.readAsDataURL()`, which
-accepts any `Blob` (not just a `File`), and a `Blob` from `fetch()` carries
-a real `.type` from the server's `Content-Type` header so `isVideoFile()`
-still resolves correctly. Routing the fetched bytes through `FileReader`
-into a `data:` URI (rather than pointing an `Image.src` straight at the
-provider's URL) is what keeps the canvas untainted for `renderCard`/export
-even though the source was cross-origin — same reason regular file uploads
-never hit CORS/tainting issues either. Unsplash's API Guidelines require
-firing a tracking request to `links.download_location` whenever a photo is
-actually used (not just displayed in search results) — `insertStockPhoto`
-does this as a fire-and-forget `fetch()` right after `setPhoto` succeeds,
-using `result.downloadLocation` carried through from `searchUnsplash`;
-failing this silently (`.catch(() => {})`) is deliberate, since it's a
-usage-accounting ping, not something the insert flow should ever block or
-fail on.
-
 **Dark theme** covers the tool's own UI chrome only — never the exported cards,
 which always render in fixed brand colors regardless of app theme (`render.js`
-has no theme awareness at all, by design). All chrome colors are CSS custom
-properties on `:root` in `styles.css`; dark values live in two blocks that must
+has no theme awareness at all, by design). The chrome is mostly white/black
+with five accents, each with one fixed role (documented at the top of
+`styles.css`): `--blue` #3A80FE selection/focus/progress, `--green` #059458
+"all good", `--red` #C32B5B delete/errors, `--amber` #BF8300 warnings,
+`--violet` #7344EA video and `//N` markers in the text. Primary buttons are
+black on light and invert to white on dark (`--primary-bg`/`--primary-text`),
+not an accent. Accent *fills* are the same in both themes; text drawn in an
+accent color uses the `--*-text` variants, which are lightened in dark mode
+for contrast, and tinted backgrounds use `--*-soft`. All chrome colors are
+CSS custom properties on `:root`; dark values live in two blocks that must
 be kept in sync: `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {...} }`
 (follows the OS setting until the user picks explicitly) and `:root[data-theme="dark"]`
 (the explicit override, set by `toggleTheme()` in app.js and persisted to
@@ -349,71 +398,32 @@ be kept in sync: `@media (prefers-color-scheme: dark) { :root:not([data-theme="l
 `index.template.html`'s `<head>` — before `<style>`, deliberately not templated
 through `__APP_JS__` — applies a saved explicit choice before first paint to
 avoid a flash of the wrong theme; it must stay a plain inline script for that
-ordering to work. Icons (`brand/icons/*.svg`) are inserted into the DOM as live
-markup (`node.innerHTML = svg` in `paintIcons`), not `<img>`/data-URIs, so they
-can reference the same CSS variables directly in their own `fill`/`stroke`
-attributes (`var(--icon-bg)`/`var(--icon-fg)` for the neutral bar-button icons,
-`var(--control)` for the small inline glyphs like the select caret) and repaint
-automatically with the theme — a new icon should follow this convention rather
-than hardcoding `white`/`#414141`. Two color roles are intentionally *not*
-theme-reactive and must stay off the `--white`/`--ink` etc. variables: brand
-accents (`--green`, the amber `--warn`) and `--on-accent` (always `#fff`, for
-text/glyphs drawn on top of a permanently-colored surface like `.btn-green` or
-the multi-select checkmark badge) — using the wrong one is the easiest way to
-end up with invisible text after a theme edit.
+ordering to work. Icons are Phosphor Icons, Bold weight (MIT, license in
+`brand/icons/LICENSE`, taken from the `@phosphor-icons/core` npm package),
+each a single-path SVG with `fill="currentColor"`. They're inserted into the
+DOM as live markup (`paintIcons` for `data-icon` placeholders in the
+template, the `icon` attribute of the `h()`/`btn()` helpers for UI built in
+code), not `<img>`/data-URIs, so they simply take the `color` of whatever
+button they sit in and repaint with the theme — a new icon should be another
+Phosphor Bold SVG with `fill="currentColor"`, never a hardcoded color. The
+stage overlay pills (`.slot-hint`, `.media-tools`) intentionally use fixed
+colors, not theme variables: they sit on top of the card canvas, whose
+colors don't follow the theme either.
 
-**Mobile layout** builds on the responsive CSS that already existed
-(`@media (max-width: 1000px)` stacks the three panels; `@media (max-width:
-560px)` is the phone tier) rather than replacing it. Two real, previously
-unnoticed bugs were found and fixed while testing this at actual phone
-viewport widths (desktop-only manual testing had never caught either):
-(1) `.modal { display: grid; place-items: center }` had no
-`grid-template-columns`, so the single implicit column sized itself to the
-modal card's own unconstrained `width: 560px` — `max-width: 100%` on the
-card then resolved against that same self-sized column and constrained
-nothing, so every modal (Help, stock-photo search, video trim) silently
-overflowed the viewport on narrow screens with no visible scrollbar cue,
-pushing close buttons and controls off-screen. Fixed by adding
-`grid-template-columns: minmax(0, 1fr)`, which ties the column to the
-modal's actual (viewport-derived) width instead of the item's preferred
-size — a general trap with centered (non-stretched) grid/flex items and
-worth remembering for any future modal-like component. (2) `.page-footer`
-switches from `position: fixed` to `position: static` under the 560px
-breakpoint (so it takes normal space instead of always overlapping page
-bottom), but `body` stayed `display: flex` in row direction, so the footer
-became a *second row-flex sibling* next to `.workspace` instead of a line
-below it — visually, the footer text landed squeezed into the top-right
-corner. Fixed with `body { flex-direction: column }` under the same
-breakpoint. Separately (not a bug, a deliberate change): the bottom `.bar`
-has ~20 buttons, which wrapped into a tall multi-row block on phone widths
-that visibly covered page content — changed to a single non-wrapping row
-with `overflow-x: auto` (native horizontal swipe/scroll) under the phone
-breakpoint instead, keeping the bar's height to one row; button and frame
-corner-control (`remove-photo`/`select-badge`/`edit-trim`/`find-photo`)
-touch targets were also bumped up under `@media (hover: none)`, since their
-desktop sizes (16–18px) are too small to reliably tap.
-
-**Bottom bar as a dock**: on desktop the `.bar` never wraps
-(`flex-wrap: nowrap`). Icon size is a CSS variable, `--dock-size`
-(default 32px). `fitDock()` in app.js recomputes it on resize from the
-real button/separator count and the bar's computed gap/padding, down to
-`DOCK_MIN`, so the row shrinks instead of wrapping. Don't hardcode a
-button count in CSS. `wireDock()` adds macOS-dock magnification, a vanilla
-port of the idea behind Aceternity's React/framer-motion `FloatingDock`
-(there's no React or framer-motion here): each button's target size falls
-off with a cosine over `DOCK_RANGE` px from the cursor, and a rAF loop
-eases the current size toward it. The loop reads every rect before writing
-any size, to avoid layout thrash. The bar has a fixed height with
-`align-items: flex-end`, so magnified icons grow upward past the bar
-instead of resizing it. Inline sizes are removed once an icon settles back
-to base. Tooltips (`.dock-tip`) replace native `title`: on each hover the
-button's `title` moves to `data-tip`/`aria-label`, re-done on every hover
-because `syncThemeButton()` rewrites the theme button's `title`.
-Magnification only runs for `(hover: hover) and (pointer: fine)` above the
-phone breakpoint (`DOCK_PHONE_MAX_WIDTH`, which must match the 560px phone
-tier in styles.css), and it's skipped under `prefers-reduced-motion`. The
-phone tier keeps its own fixed 40px, horizontally scrolling row and hides
-`.dock-tip`.
+**Mobile layout**: breakpoints in `styles.css` are 1180px (narrower side
+columns), 900px (the three columns stack: stage first, then the slide list
+as a horizontal strip, then the side panel; per-thumbnail tools are hidden
+there, so the same actions also live in the slide form's «Карточка» block)
+and 560px (phone: `.hide-sm` controls hidden, modals go full-screen, the
+export popover spans the width). Under 900px `.stage` gets an explicit
+`height: 60vh` — as a `flex: 1` child of an auto-height column it would
+collapse to zero. `.modal` keeps `grid-template-columns: minmax(0, 1fr)`:
+without it the implicit grid column sizes itself to the modal card's own
+preferred width, `max-width: 100%` then resolves against that same column
+and constrains nothing, and every modal silently overflows a phone screen
+with its close button off-screen — a general trap with centered grid/flex
+items worth remembering for any future modal-like component. Touch targets
+are enlarged under `@media (hover: none)`.
 
 **Installing to the home screen** was already technically possible before
 this (manifest + service worker satisfy Chrome/Android's installability
@@ -442,25 +452,6 @@ degrade gracefully rather than break the page; `localStorage` may be unavailable
 in private browsing; video export feature-detects `MediaRecorder.isTypeSupported()`
 across `VIDEO_EXPORT_CANDIDATES` (mp4 variants, then vp9 → vp8 → plain webm)
 and fails with a clear message rather than a crash if none is supported,
-without blocking export of the remaining photo cards; stock photo search is
-the one feature that needs real network access to third-party APIs and
-degrades to "no results" rather than breaking anything else when offline or
-when a source's key isn't configured.
-
-**Note for whoever picks this up next**: the stock photo search
-(`searchPixabay`/`searchPexels`/`searchUnsplash`/`searchOpenverse`) was
-built from the providers' documented API contracts but has never been
-exercised against the live APIs — this dev sandbox's egress proxy
-hard-blocks `api.openverse.org` (and presumably would block
-`pixabay.com`/`pexels.com`/`api.unsplash.com` too) with a 403 on CONNECT,
-and no Pixabay/Pexels/Unsplash API keys were available to test with
-regardless. Everything *around* the network calls (modal
-open/close, query prefill, the click-to-insert pipeline via `setPhoto`) was
-verified end to end by swapping in a fake local image result, which is a
-real test of that code path — but the actual `fetch()` calls, exact
-response field names, and the assumption that these providers' image CDNs
-send CORS headers permissive enough for `fetch()` to read the bytes (not
-just `<img>`-display them) are unverified. Test against the real APIs
-before trusting this in production, and if the response shape doesn't
-match, the fix is almost certainly a small field-name mismatch in the one
-`.map()` in the relevant search function, not the surrounding structure.
+without blocking export of the remaining photo cards. The app makes no
+network requests at all at runtime (stock photo search was removed in the
+redesign), so everything works offline once the page is cached.
