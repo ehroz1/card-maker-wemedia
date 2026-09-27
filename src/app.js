@@ -1,29 +1,26 @@
 /* Card Maker — интерфейс. Всё считается локально в браузере. */
 
 const STORE_TEMPLATES = 'cardmaker.templates.v2';
-// v3: cardStyles хранится по стабильному ключу карточки (см. cardKeys), а не по позиции
-const STORE_PROJECT = 'cardmaker.project.v3';
+const STORE_DRAFTS = 'cardmaker.drafts.v1';
+// до черновиков проект был один на браузер — при первом запуске он переносится в черновики
+const STORE_PROJECT_LEGACY = 'cardmaker.project.v3';
 const STORE_THEME = 'cardmaker.theme.v1';
-const PREVIEW_CSS_WIDTH = 225;
-const PREVIEW_SCALE = 2;
+const MAX_DRAFTS = 40;
 const ZOOM_MIN = 1, ZOOM_MAX = 2.5;
+const FIT_MIN_RATIO = 0.7;    // «Уместить» не уменьшает кегль ниже 70% от макета
+const UPSCALE_WARN = 1.25;    // фото растягивается больше чем на четверть — может выйти мыльным
+const SELECTION_SIZES = [28, 32, 34, 36, 38, 40, 42, 44, 48, 52, 54, 60, 64, 68, 72, 80, 90];
 
-/*
- * Поиск фото по четырём бесплатным источникам разом (см. searchStockPhotos) —
- * Pixabay, Pexels и Unsplash требуют свой бесплатный ключ (заводится на
- * pixabay.com/api, pexels.com/api и unsplash.com/developers без карты, за
- * пару минут — вставь вместо заглушки ниже), Openverse ключа не требует
- * вовсе (анонимные запросы, лимит построже). Источник без настроенного
- * ключа просто не участвует в поиске — остальные работают как обычно.
- * У Unsplash демо-ключ ограничен 50 запросами в час (своя квота на каждый
- * источник, не общая) — для более активного использования на
- * unsplash.com/oauth/applications можно подать заявку на Production-доступ.
- */
-const PIXABAY_API_KEY = '39541689-1120d9cb88846ce0ffcf822d8';
-const PEXELS_API_KEY = 'klZgGCRag8p0P4WwRIXVFfgV0183YbvPnj5MveXkzizgC4d3OWG2GgEr';
-const UNSPLASH_ACCESS_KEY = 'CQixfAKKmy4-7UkY88ZHps4ZOGDUyQ0vctcJyOH1zHM';
-const STOCK_MIN_SIZE = 720;   // «не меньше 720 пикселей по ширине и высоте» — без исключений
-const STOCK_PER_PAGE = 15;
+const FORMAT_INFO = {
+  '1080×1350': { name: 'Пост 4:5', short: '4:5', desc: 'Основной формат карусели в ленте Instagram.' },
+  '1080×1080': { name: 'Квадрат 1:1', short: '1:1', desc: 'Квадратные карточки — для ленты и репостов.' },
+  '1080×1920': { name: 'Stories 9:16', short: '9:16', desc: 'Вертикальный формат для Stories и обложек Reels.' },
+};
+
+const SAMPLE_COVER = {
+  title: 'Как плавание изменило мою жизнь',
+  body: 'Лаура Саламат — о пяти заплывах и 14 километрах',
+};
 
 const SAMPLE = `//1
 _Лаура Саламат, Enterprise Architect — сооснователь сообщества IT-архитекторов Казахстана_
@@ -37,83 +34,74 @@ _Лаура Саламат, Enterprise Architect — сооснователь с
 
 В бассейн я пришла ради _красоты_ и хорошей осанки. Но довольно быстро стало интереснее не то, как выглядит мое тело, а то, на что оно становится способно.`;
 
+const TRANSFORM_KEYS = ['zoom', 'panX', 'panY', 'rotate', 'grayscale', 'brightness', 'contrast'];
+
 const state = {
+  screen: 'home',       // home | editor
+  draftId: null,        // открытый черновик (см. «черновики»)
+  draftName: '',        // имя, заданное вручную; пустое — берётся из обложки
+  draftCreatedAt: 0,
   cover: { kind: 'cover', title: '', body: '', img: null, usePhoto: true,
            zoom: 1, panX: 0, panY: 0, rotate: 0,
            grayscale: false, brightness: 100, contrast: 100, style: null },
   coverTitleSize: 60,
   coverBodySize: 45,
   cardsText: '',
-  // фото или видео (по значению — HTMLImageElement либо HTMLVideoElement,
-  // см. isVideoFile/fileToVideo) на карточке, стиль и трансформация хранятся
-  // по стабильному ключу карточки (см. cardKeys), а не по позиции — иначе
-  // вставка или удаление карточки выше по тексту молча переносит их на
-  // другую карточку
+  // фото или видео (HTMLImageElement либо HTMLVideoElement) карточки, её
+  // ручной стиль и трансформация хранятся по стабильному ключу карточки
+  // (см. cardKeys), а не по позиции — иначе вставка, удаление или
+  // перестановка карточки молча переносили бы их на соседнюю
   photosById: {},
-  cardStylesById: {},   // стиль каждой карточки: то, что пользователь поменял руками
-  transformsById: {},   // zoom/panX/panY/rotate каждой карточки с фото
+  cardStylesById: {},
+  transformsById: {},
   cardIds: [],          // ключи карточек state.cards, посчитанные последним syncCards()
-  cards: [],           // разобранные карточки (пересобираются из текста)
+  cards: [],            // разобранные карточки (пересобираются из текста)
   format: DEFAULT_FORMAT,
   exportFormat: 'png',
   exportScale: 1,       // множитель разрешения при экспорте (1×/2×/3×)
-  exportZip: false,     // скачивать все карточки одним ZIP вместо файла за файлом
+  exportMode: 'zip',    // что делает ⌘S: zip — одним архивом, files — файлами по одному
   coverStyles: { title: {}, body: {} },   // заголовок и подзаголовок обложки — отдельно
+  coverTarget: 'title', // что правит блок «Типографика» на обложке
   templateName: null,
   templates: {},
   assets: {},
-  current: 0,          // 0 — обложка, далее карточки
-  focusZone: 'editor', // где пользователь работал: editor | coverTitle | coverBody | preview
-  lastCaret: null,     // последнее положение курсора в поле карточек
+  current: 0,           // 0 — обложка, дальше карточки
+  tab: 'slide',         // вкладка правой панели: slide | text | project
+  overflow: [],         // по индексу allCards(): не помещается ли текст (по последней отрисовке)
   fontsReady: false,
-  undoStack: [],       // снимки состояния для отмены (см. pushUndo/undo/redo)
+  undoStack: [],
   redoStack: [],
-  selectedKeys: new Set(),   // множественный выбор карточек — ключи (см. cardKeys), не позиции
-  selectAnchor: null,        // с какой карточки считать диапазон при Shift+клике (индекс в state.cards)
+  // фото и видео уже открывавшихся в этой вкладке черновиков — по id черновика.
+  // В localStorage медиа не сохраняются (слишком большие), но пока вкладка
+  // открыта, можно уйти к списку проектов и вернуться, не потеряв их
+  sessionMedia: {},
 };
 
 const el = {};
-['previews', 'coverTitle', 'coverBody', 'coverTitleSize', 'coverBodySize', 'cardsText',
- 'fontWeight', 'fontSize', 'lineHeight', 'letterSpacing', 'alignGroup', 'exportFormat',
- 'status', 'menu', 'filePicker', 'assetPicker', 'exportProgress', 'exportProgressBar',
- 'rngScale', 'rngOffsetX', 'rngOffsetY', 'rngRotate', 'typoScope', 'exportScale', 'exportZip',
- 'scaleOut', 'offsetXOut', 'offsetYOut', 'rotateOut',
- 'chkGrayscale', 'rngBrightness', 'rngContrast', 'brightnessOut', 'contrastOut']
+['status', 'filePicker', 'assetPicker', 'exportProgress', 'exportProgressBar', 'cardsText',
+ 'home', 'editor', 'draftsSection', 'draftsRow', 'formatGrid', 'docName', 'docFormat',
+ 'exportPop', 'slidesList', 'stage', 'stageInner', 'stageCanvas', 'stageOverlay',
+ 'warnings', 'slideCounter', 'tabSlide', 'tabText', 'tabProject']
   .forEach(id => { el[id] = document.getElementById(id); });
 
-/* --------------------------------------------------- поле ввода карточек */
-
-/* Текст поля в виде разметки. */
-function editorValue() {
-  return htmlToMarkup(el.cardsText);
-}
-
-/* Показать разметку в поле, сохранив положение курсора. */
-function setEditorValue(text, keepCaret = true) {
-  const caret = keepCaret ? getCaretOffset(el.cardsText) : null;
-  el.cardsText.innerHTML = markupToHtml(text);
-  if (caret) setCaretOffset(el.cardsText, caret.start, caret.end);
-}
-
-/* Выделение в поле как смещения в разметке. */
-function editorSelection() {
-  const plain = getCaretOffset(el.cardsText);
-  if (!plain) return null;
-  return plain;
-}
+/* ------------------------------------------------------------- мелочи */
 
 let statusTimer = null;
 function say(text) {
   el.status.textContent = text;
+  el.status.classList.add('show');
   clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => { el.status.textContent = ''; }, 5000);
+  statusTimer = setTimeout(() => el.status.classList.remove('show'), 3200);
 }
 
-/* ---------------------------------------------------------------- иконки */
+function iconSvg(name) {
+  return (typeof ICONS !== 'undefined' && ICONS[name]) || '';
+}
 
+/* Статичные значки из разметки: <span data-icon="plus"> → инлайн-SVG. */
 function paintIcons(root = document) {
   root.querySelectorAll('[data-icon]').forEach(node => {
-    const svg = (typeof ICONS !== 'undefined') ? ICONS[node.dataset.icon] : null;
+    const svg = iconSvg(node.dataset.icon);
     if (svg && !node.dataset.painted) {
       node.innerHTML = svg;
       node.dataset.painted = '1';
@@ -121,16 +109,83 @@ function paintIcons(root = document) {
   });
 }
 
+/* Короткий конструктор DOM-узлов для форм, которые собираются в коде. */
+function h(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === null || value === undefined || value === false) continue;
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key === 'icon') node.innerHTML = iconSvg(value);
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key in node && typeof value !== 'string') node[key] = value;
+    else node.setAttribute(key, value === true ? '' : value);
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+/* Кнопка со значком и подписью (подпись необязательна). */
+function btn(cls, icon, label, onclick, title) {
+  const b = h('button', { type: 'button', class: cls, title, onclick });
+  if (icon) b.append(h('span', { 'data-icon': icon, 'data-painted': '1', icon }));
+  if (label) b.append(document.createTextNode(label));
+  return b;
+}
+
+function iconBtn(icon, title, onclick, extra = '') {
+  return h('button', { type: 'button', class: 'icon-btn ' + extra, title, 'aria-label': title, icon, onclick });
+}
+
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+/* Текст без разметки (**, _, кегль) — для подписей и имени черновика. */
+function plainText(markup) {
+  return markupToChars(markup).map(c => c.ch).join('').replace(/\s+/g, ' ').trim();
+}
+
+/*
+ * Имя файла для скачивания из названия проекта — латиницей: кириллицу
+ * в атрибуте download Chromium местами молча заменяет на «download»,
+ * поэтому как и у слайдов (00-oblozhka), имена файлов только ASCII.
+ */
+const TRANSLIT = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i',
+  й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+  х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+  ә: 'a', ғ: 'g', қ: 'k', ң: 'n', ө: 'o', ұ: 'u', ү: 'u', һ: 'h', і: 'i' };
+function fileSlug(text, fallback) {
+  const slug = [...String(text || '').toLowerCase()].map(ch => (ch in TRANSLIT ? TRANSLIT[ch] : ch)).join('')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+  return slug || fallback;
+}
+
+function pluralRu(n, one, few, many) {
+  const m10 = n % 10, m100 = n % 100;
+  if (m10 === 1 && m100 !== 11) return one;
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+  return many;
+}
+
+function formatAgo(ts) {
+  const diff = Math.max(0, Date.now() - ts) / 1000;
+  if (diff < 60) return 'только что';
+  if (diff < 3600) { const m = Math.round(diff / 60); return m + ' ' + pluralRu(m, 'минуту', 'минуты', 'минут') + ' назад'; }
+  if (diff < 86400) { const hr = Math.round(diff / 3600); return hr + ' ' + pluralRu(hr, 'час', 'часа', 'часов') + ' назад'; }
+  return new Date(ts).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
 /* ----------------------------------------------------------------- тема */
 /*
- * Тёмная тема — переключаемая, с запоминанием выбора. По умолчанию (пока
- * пользователь ничего не выбрал) следует системной настройке через CSS
- * (@media prefers-color-scheme) — атрибут data-theme на <html> тогда не
- * ставится вовсе. Явный выбор сохраняется в localStorage и перекрывает
- * системную тему через :root[data-theme="dark"]/[data-theme="light"] в
- * styles.css. Применение сохранённого выбора при самом первом рисовании
- * страницы (до этого скрипта) — см. небольшой инлайновый скрипт в <head>
- * index.template.html, чтобы не было вспышки не той темы при загрузке.
+ * Тёмная тема — переключаемая, с запоминанием выбора. Пока пользователь
+ * ничего не выбрал, следует системной настройке через CSS (@media
+ * prefers-color-scheme) — атрибут data-theme на <html> тогда не ставится.
+ * Явный выбор сохраняется в localStorage и перекрывает системную тему через
+ * :root[data-theme=…]; применяется ещё до отрисовки маленьким скриптом
+ * в <head> index.template.html, чтобы не мелькала не та тема.
+ * Кнопок темы две (стартовый экран и редактор) — обе с классом .theme-btn.
  */
 function systemPrefersDark() {
   return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -140,11 +195,11 @@ function isDarkActive() {
   return t ? t === 'dark' : systemPrefersDark();
 }
 function syncThemeButton() {
-  const btn = document.getElementById('btnTheme');
-  if (!btn) return;
   const dark = isDarkActive();
-  btn.title = dark ? 'Светлая тема' : 'Тёмная тема';
-  btn.classList.toggle('active', dark);
+  document.querySelectorAll('.theme-btn').forEach(button => {
+    button.title = dark ? 'Светлая тема' : 'Тёмная тема';
+    button.innerHTML = iconSvg(dark ? 'sun' : 'moon');
+  });
 }
 function toggleTheme() {
   const next = isDarkActive() ? 'light' : 'dark';
@@ -153,6 +208,12 @@ function toggleTheme() {
   syncThemeButton();
 }
 
+/* Режим «только превью»: прячет список слайдов и панель настроек. */
+function toggleFocusMode(force) {
+  const on = el.editor.classList.toggle('focus', force);
+  document.getElementById('btnFocus').classList.toggle('active', on);
+  requestAnimationFrame(renderStage);
+}
 /* ------------------------------------------------ установка на телефон */
 /*
  * Приложение уже полноценный PWA (manifest.webmanifest + service-worker.js,
@@ -232,156 +293,12 @@ function wireInstallBanner() {
   window.addEventListener('appinstalled', hideInstallBanner);
 }
 
-/* --------------------------------------------------- нижняя панель: док */
+/* ------------------------------------------------------ шаблоны бренда */
 /*
- * Панель всегда в один ряд: если иконки размера по умолчанию не влезают
- * в окно, fitDock() уменьшает --dock-size (не меньше DOCK_MIN), а не
- * переносит ряд. На телефоне (≤560px) у панели свой режим — ряд с
- * прокруткой и фиксированным размером (см. styles.css), fitDock там не
- * вмешивается.
- *
- * wireDock() — увеличение иконок под курсором, как в доке macOS: каждая
- * иконка растёт тем сильнее, чем ближе к ней курсор (косинусный спад на
- * DOCK_RANGE пикселей), размер догоняет цель плавно (DOCK_EASE за кадр),
- * поэтому соседи раздвигаются мягко. Только для мыши (на тач-экранах
- * наведения нет) и не при prefers-reduced-motion — подписи над иконками
- * при этом остаются.
+ * Шаблон бренда (меню «Проект → Шаблон бренда») — логотипы, затемнение
+ * обложки и кегль/стиль обложки. Шаблоны общие для всех черновиков, каждый
+ * черновик помнит, какой из них выбран (templateName).
  */
-const DOCK_MIN = 24, DOCK_MAX = 32;
-const DOCK_MAGNIFY = 1.55;   // во сколько раз растёт иконка прямо под курсором
-const DOCK_RANGE = 110;      // на каком расстоянии от курсора (px) соседи ещё растут
-const DOCK_EASE = 0.22;
-const DOCK_PHONE_MAX_WIDTH = 560;   // тот же брейкпоинт, что «телефон» в styles.css
-
-function fitDock() {
-  const bar = document.querySelector('.bar');
-  if (window.innerWidth <= DOCK_PHONE_MAX_WIDTH) { bar.style.removeProperty('--dock-size'); return; }
-  const cs = getComputedStyle(bar);
-  const buttons = bar.querySelectorAll('button').length;
-  const seps = bar.querySelectorAll('.sep').length;
-  const gap = parseFloat(cs.columnGap) || 0;
-  const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) +
-    parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
-  const available = window.innerWidth - 24 - chrome - gap * (buttons + seps - 1) - seps;
-  const size = Math.max(DOCK_MIN, Math.min(DOCK_MAX, Math.floor(available / buttons)));
-  bar.style.setProperty('--dock-size', size + 'px');
-}
-
-function wireDock() {
-  const bar = document.querySelector('.bar');
-  const buttons = [...bar.querySelectorAll('button')];
-  const tip = document.createElement('div');
-  tip.className = 'dock-tip';
-  tip.setAttribute('aria-hidden', 'true');
-  bar.appendChild(tip);
-
-  const mq = q => (window.matchMedia ? window.matchMedia(q) : { matches: false });
-  const finePointer = mq('(hover: hover) and (pointer: fine)');
-  const reducedMotion = mq('(prefers-reduced-motion: reduce)');
-  const active = () => finePointer.matches && window.innerWidth > DOCK_PHONE_MAX_WIDTH;
-  const baseSize = () => parseFloat(getComputedStyle(bar).getPropertyValue('--dock-size')) || DOCK_MAX;
-
-  let mouseX = null;
-  let hovered = null;
-  let raf = null;
-  const sizes = new Map();   // текущий (анимированный) размер иконки, пока он отличается от базового
-
-  const placeTip = () => {
-    if (!hovered) return;
-    tip.style.left = (hovered.offsetLeft + hovered.offsetWidth / 2) + 'px';
-    tip.style.bottom = (bar.clientHeight - hovered.offsetTop + 8) + 'px';
-  };
-
-  const tick = () => {
-    raf = null;
-    const base = baseSize();
-    // сначала все замеры, потом все записи — иначе каждая запись размера
-    // сбрасывала бы раскладку перед следующим замером
-    const centers = buttons.map(btn => {
-      const r = btn.getBoundingClientRect();
-      return r.left + r.width / 2;
-    });
-    let moving = false;
-    buttons.forEach((btn, i) => {
-      let target = base;
-      if (mouseX !== null && !reducedMotion.matches) {
-        const d = Math.abs(mouseX - centers[i]);
-        if (d < DOCK_RANGE) {
-          target = base * (1 + (DOCK_MAGNIFY - 1) * (Math.cos(d / DOCK_RANGE * Math.PI) + 1) / 2);
-        }
-      }
-      const cur = sizes.has(btn) ? sizes.get(btn) : base;
-      let next = cur + (target - cur) * DOCK_EASE;
-      if (Math.abs(target - next) < 0.3) next = target;
-      else moving = true;
-      if (Math.abs(next - base) < 0.01) {
-        sizes.delete(btn);
-        btn.style.width = '';
-        btn.style.height = '';
-      } else {
-        sizes.set(btn, next);
-        btn.style.width = next + 'px';
-        btn.style.height = next + 'px';
-      }
-    });
-    placeTip();
-    if (moving) raf = requestAnimationFrame(tick);
-  };
-  const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
-
-  buttons.forEach(btn => {
-    btn.addEventListener('mouseenter', () => {
-      if (!active()) return;
-      // системный title показал бы вторую подсказку поверх нашей — переносим
-      // его текст в data-tip при каждом наведении (кнопка темы меняет title
-      // сама, см. syncThemeButton, поэтому один раз на старте недостаточно)
-      if (btn.title) {
-        btn.dataset.tip = btn.title;
-        btn.setAttribute('aria-label', btn.title);
-        btn.removeAttribute('title');
-      }
-      hovered = btn;
-      tip.textContent = btn.dataset.tip || '';
-      tip.classList.toggle('show', Boolean(tip.textContent));
-      placeTip();
-    });
-    btn.addEventListener('mouseleave', () => {
-      if (hovered !== btn) return;
-      hovered = null;
-      tip.classList.remove('show');
-    });
-  });
-
-  bar.addEventListener('mousemove', e => {
-    if (!active()) return;
-    mouseX = e.clientX;
-    kick();
-  });
-  bar.addEventListener('mouseleave', () => {
-    mouseX = null;
-    hovered = null;
-    tip.classList.remove('show');
-    kick();
-  });
-  window.addEventListener('resize', () => { fitDock(); kick(); });
-  fitDock();
-}
-
-/* --------------------------------------------------------- режим фокуса */
-/*
- * Прячет панель типографики и все карточки в превью, кроме выбранной (см.
- * .focus-mode в styles.css) — только текст и текущая карточка, без
- * отвлекающих панелей. Переключение чисто визуальное — ничего в state не
- * меняет, поэтому не персистится между перезагрузками, в отличие от темы.
- */
-function toggleFocusMode() {
-  const on = document.body.classList.toggle('focus-mode');
-  const btn = document.getElementById('btnFocus');
-  if (btn) btn.classList.toggle('active', on);
-}
-
-/* ------------------------------------------------------------- хранилище */
-
 function loadTemplates() {
   try { state.templates = JSON.parse(localStorage.getItem(STORE_TEMPLATES) || '{}'); }
   catch { state.templates = {}; }
@@ -410,8 +327,6 @@ function applyTemplateDesign(name) {
   state.coverBodySize = tpl.coverBodySize || 45;
   state.coverStyles = tpl.coverStyles
     ? JSON.parse(JSON.stringify(tpl.coverStyles)) : { title: {}, body: {} };
-  el.coverTitleSize.textContent = String(state.coverTitleSize);
-  el.coverBodySize.textContent = String(state.coverBodySize);
   syncCards();
 }
 
@@ -420,64 +335,192 @@ function saveTemplates() {
   catch { say('Не хватает места в браузере — логотип не сохранён'); }
 }
 
-function saveProject() {
-  const data = {
+/* ----------------------------------------------------------- черновики */
+/*
+ * Каждый проект — черновик в localStorage (STORE_DRAFTS): текст, настройки
+ * и ручные стили карточек, без фото и видео. Список черновиков читается
+ * заново перед каждой записью, а не держится в памяти, — так две открытые
+ * вкладки с разными проектами не затирают черновики друг друга.
+ * Раньше проект был один на браузер (STORE_PROJECT_LEGACY) — при первом
+ * запуске он становится первым черновиком, старый ключ не трогаем.
+ */
+function newId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+function readDrafts() {
+  let list = null;
+  try { list = JSON.parse(localStorage.getItem(STORE_DRAFTS) || 'null'); } catch { list = null; }
+  if (Array.isArray(list)) return list.filter(d => d && d.id && d.data);
+
+  const drafts = [];
+  let legacy = null;
+  try { legacy = JSON.parse(localStorage.getItem(STORE_PROJECT_LEGACY) || 'null'); } catch { legacy = null; }
+  if (legacy && typeof legacy.cardsText === 'string') {
+    const now = Date.now();
+    drafts.push({ id: newId(), name: '', createdAt: now, updatedAt: now, data: legacy });
+  }
+  writeDrafts(drafts);
+  return drafts;
+}
+
+function writeDrafts(list) {
+  try { localStorage.setItem(STORE_DRAFTS, JSON.stringify(list.slice(0, MAX_DRAFTS))); return true; }
+  catch { return false; }
+}
+
+/* Имя черновика, если его не задали вручную: заголовок обложки или первая строка текста. */
+function autoDraftName(data) {
+  const cover = plainText(data.coverTitle || '') || plainText(data.coverBody || '');
+  if (cover) return cover.slice(0, 60);
+  for (const line of String(data.cardsText || '').split('\n')) {
+    if (MARKER_RE.test(line.trim())) continue;
+    const text = plainText(line);
+    if (text) return text.slice(0, 60);
+  }
+  return 'Без названия';
+}
+
+function draftDisplayName(draft) {
+  return draft.name || autoDraftName(draft.data);
+}
+
+/* Всё, что сохраняется в черновик и в файл проекта. */
+function projectData() {
+  return {
     coverTitle: state.cover.title, coverBody: state.cover.body,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat, exportScale: state.exportScale, exportZip: state.exportZip,
+    exportFormat: state.exportFormat, exportScale: state.exportScale, exportMode: state.exportMode,
     cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
     templateName: state.templateName,
   };
-  try { localStorage.setItem(STORE_PROJECT, JSON.stringify(data)); } catch { /* не критично */ }
 }
 
-/* Переносит сохранённый объект проекта (из localStorage или из файла) в state. */
+let draftSaveWarned = false;
+function saveProject() {
+  if (!state.draftId) return;
+  const now = Date.now();
+  const list = readDrafts().filter(d => d.id !== state.draftId);
+  list.unshift({ id: state.draftId, name: state.draftName, createdAt: state.draftCreatedAt || now,
+                 updatedAt: now, data: projectData() });
+  if (!writeDrafts(list) && !draftSaveWarned) {
+    draftSaveWarned = true;   // один раз, а не на каждую букву
+    say('Не хватает места в браузере — черновик не сохраняется');
+  }
+}
+
+/* Переносит сохранённый объект проекта (из черновика или из файла) в state. */
 function applyProjectData(d) {
   state.cover.title = d.coverTitle || '';
   state.cover.body = d.coverBody || '';
   state.coverTitleSize = d.coverTitleSize || 60;
   state.coverBodySize = d.coverBodySize || 45;
   state.cardsText = d.cardsText || '';
-  if (FORMATS[d.format]) state.format = d.format;
+  state.format = FORMATS[d.format] ? d.format : DEFAULT_FORMAT;
   if (d.exportFormat) state.exportFormat = d.exportFormat;
   if (d.exportScale && [1, 2, 3].includes(Number(d.exportScale))) state.exportScale = Number(d.exportScale);
-  if (typeof d.exportZip === 'boolean') state.exportZip = d.exportZip;
-  if (d.cardStylesById && typeof d.cardStylesById === 'object') state.cardStylesById = d.cardStylesById;
-  if (d.coverStyles) state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles);
+  // у проектов старой версии вместо exportMode была галочка exportZip
+  if (d.exportMode === 'zip' || d.exportMode === 'files') state.exportMode = d.exportMode;
+  else if (d.exportZip === false) state.exportMode = 'files';
+  state.cardStylesById = (d.cardStylesById && typeof d.cardStylesById === 'object') ? d.cardStylesById : {};
+  state.coverStyles = Object.assign({ title: {}, body: {} }, d.coverStyles || {});
   if (d.templateName && state.templates[d.templateName]) state.templateName = d.templateName;
 }
 
-function loadProject() {
-  let d = null;
-  try { d = JSON.parse(localStorage.getItem(STORE_PROJECT) || 'null'); } catch { d = null; }
-  if (!d) return false;
-  applyProjectData(d);
-  return true;
+/* Чистое состояние проекта — перед открытием черновика или созданием нового. */
+function resetProjectState() {
+  Object.assign(state.cover, { title: '', body: '', img: null, zoom: 1, panX: 0, panY: 0, rotate: 0,
+    grayscale: false, brightness: 100, contrast: 100 });
+  state.cardsText = '';
+  state.photosById = {};
+  state.cardStylesById = {};
+  state.transformsById = {};
+  state.coverStyles = { title: {}, body: {} };
+  state.coverTarget = 'title';
+  state.format = DEFAULT_FORMAT;
+  state.exportMode = 'zip';
+  state.current = 0;
+  state.overflow = [];
+  state.undoStack = [];
+  state.redoStack = [];
 }
 
-/* Сохраняет проект (без фото — как и localStorage-версия) отдельным файлом. */
-function exportProjectFile() {
-  const data = {
-    coverTitle: state.cover.title, coverBody: state.cover.body,
-    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
-    cardsText: state.cardsText, format: state.format,
-    exportFormat: state.exportFormat, exportScale: state.exportScale, exportZip: state.exportZip,
-    cardStylesById: state.cardStylesById, coverStyles: state.coverStyles,
-    templateName: state.templateName,
+function stashSessionMedia() {
+  if (!state.draftId) return;
+  const coverTransform = {};
+  TRANSFORM_KEYS.forEach(k => { coverTransform[k] = state.cover[k]; });
+  state.sessionMedia[state.draftId] = {
+    coverImg: state.cover.img, coverTransform,
+    photosById: state.photosById, transformsById: state.transformsById,
   };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(blob);
-  link.download = 'card-maker-project.json';
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
+function restoreSessionMedia(id) {
+  const m = state.sessionMedia[id];
+  if (!m) return;
+  state.cover.img = m.coverImg;
+  Object.assign(state.cover, m.coverTransform);
+  state.photosById = m.photosById;
+  state.transformsById = m.transformsById;
+}
+
+function hasAnyMedia() {
+  if (state.cover.img || Object.values(state.photosById).some(Boolean)) return true;
+  return Object.entries(state.sessionMedia).some(([id, m]) =>
+    id !== state.draftId && (m.coverImg || Object.values(m.photosById).some(Boolean)));
+}
+
+async function openDraft(id) {
+  const draft = readDrafts().find(d => d.id === id);
+  if (!draft) { say('Черновик не найден'); renderHome(); return; }
+  stashSessionMedia();
+  resetProjectState();
+  state.draftId = draft.id;
+  state.draftName = draft.name || '';
+  state.draftCreatedAt = draft.createdAt || draft.updatedAt || Date.now();
+  applyProjectData(draft.data);
+  restoreSessionMedia(draft.id);
+  if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
+  showEditor();
+}
+
+async function createDraft(format, withSample) {
+  stashSessionMedia();
+  resetProjectState();
+  state.draftId = newId();
+  state.draftName = '';
+  state.draftCreatedAt = Date.now();
+  state.format = format;
+  applyTemplateDesign(state.templateName);   // кегль и стиль обложки — из шаблона бренда
+  if (withSample) {
+    state.cover.title = SAMPLE_COVER.title;
+    state.cover.body = SAMPLE_COVER.body;
+    state.cardsText = SAMPLE;
+  } else {
+    state.cardsText = '//1\n';
+  }
+  if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
+  saveProject();
+  showEditor();
+  if (!withSample) say('Пустой проект: обложка и одна карточка');
+}
+
+function deleteDraft(id) {
+  writeDrafts(readDrafts().filter(d => d.id !== id));
+  delete state.sessionMedia[id];
+  renderHome();
+}
+
+/* Сохраняет проект (без фото — как и черновик) отдельным файлом. */
+function exportProjectFile() {
+  const blob = new Blob([JSON.stringify(projectData(), null, 2)], { type: 'application/json' });
+  const name = fileSlug(state.draftName || autoDraftName(projectData()), 'card-maker-project');
+  downloadBlob(blob, name + '.json');
   say('Проект сохранён в файл');
 }
 
-/* Загружает проект из файла, сохранённого exportProjectFile(). Фото не переносятся. */
+/* Открывает проект из файла, сохранённого exportProjectFile(), как новый черновик. */
 function importProjectFile() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -486,26 +529,23 @@ function importProjectFile() {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       let d = null;
       try { d = JSON.parse(reader.result); } catch { d = null; }
       if (!d || typeof d !== 'object' || typeof d.cardsText !== 'string') {
         say('Файл не похож на проект Card Maker');
         return;
       }
+      stashSessionMedia();
+      resetProjectState();
+      state.draftId = newId();
+      state.draftName = file.name.replace(/\.json$/i, '');
+      state.draftCreatedAt = Date.now();
       applyProjectData(d);
-      // фото в файл не попадают — старые привязки от предыдущего проекта тоже сбрасываем
-      state.photosById = {};
-      state.transformsById = {};
-      state.current = 0;
-      state.focusZone = 'editor';
-      state.lastCaret = null;
-      fillControls();
-      syncCards();
-      buildPreviews();
-      syncTypographyControls();
+      if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
       saveProject();
-      say('Проект загружен из файла — фото нужно добавить заново');
+      showEditor();
+      say('Проект открыт — фото и видео нужно добавить заново');
     };
     reader.onerror = () => say('Не удалось прочитать файл');
     reader.readAsText(file);
@@ -616,12 +656,8 @@ function syncCards() {
   state.cover.style = { size: state.coverBodySize, headingSize: state.coverTitleSize };
   state.cover.titleStyle = Object.assign({}, state.coverStyles.title);
   state.cover.bodyStyle = Object.assign({}, state.coverStyles.body);
-  if (state.current > state.cards.length) state.current = 0;
-  // выбор хранится по ключу — но если карточка с таким ключом пропала
-  // из текста (удалили/переименовали метку), больше нет смысла её держать
-  for (const key of state.selectedKeys) {
-    if (!state.cardIds.includes(key)) state.selectedKeys.delete(key);
-  }
+  if (state.current > state.cards.length) state.current = state.cards.length;
+  state.overflow.length = state.cards.length + 1;
 }
 
 /* Записывает текущий zoom/pan/rotate карточки под её позицией в storage по ключу. */
@@ -636,32 +672,249 @@ function commitTransform(index) {
   };
 }
 
+function allCards() {
+  return [state.cover].concat(state.cards);
+}
+
+function cardLabel(i) {
+  return i === 0 ? 'Обложка' : 'Карточка ' + i;
+}
+
+function hasPhoto(card) {
+  return Boolean(card && card.usePhoto && card.img);
+}
+
+/* Можно ли вообще поставить фото на этот слайд (карточка //N- — нельзя). */
+function canHavePhoto(card) {
+  return Boolean(card && (card.kind === 'cover' || card.usePhoto));
+}
+
+/* -------------------------------------------------- блоки текста карточек */
 /*
- * Разбивает текст карточек на блоки по меткам //N: каждый блок — массив
- * строк от своей метки (включительно) до строки перед следующей меткой.
- * blocks.map(b => b.join('\n')).join('\n') всегда восстанавливает исходный
- * текст один в один — блоки партиционируют строки без потерь и наложений.
- * Общий разбор для duplicateCard()/reorderCard().
+ * Весь текст карточек — одна разметка (state.cardsText) с метками //N.
+ * Вкладка «Весь текст» правит её целиком, форма слайда — только блок своей
+ * карточки. Блок начинается строкой-меткой и идёт до следующей метки —
+ * ровно так же, как его видит parseCards(). Если перед первой меткой есть
+ * непустой текст, parseCards считает его отдельной карточкой без метки —
+ * здесь это тоже блок (marker: null), иначе номера блоков разошлись бы
+ * с номерами карточек. Пустые строки перед первым блоком — префикс.
+ * joinBlocks(splitBlocks(t)) === t для любого текста.
  */
-function splitCardBlocks(text) {
-  const markerRe = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
-  const lines = text.split('\n');
-  const starts = [];
-  let maxNum = 0;
-  lines.forEach((line, i) => {
-    const m = line.trim().match(markerRe);
-    if (m) { starts.push(i); if (m[1]) maxNum = Math.max(maxNum, Number(m[1])); }
+const MARKER_RE = /^\/\/\s*(\d+)?\s*([+-])?\s*$/;
+
+function splitBlocks(text) {
+  const lines = String(text || '').split('\n');
+  const prefix = [];
+  const blocks = [];
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) prefix.push(lines[i++]);
+  let current = null;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (MARKER_RE.test(line.trim())) {
+      current = { marker: line, body: [] };
+      blocks.push(current);
+    } else {
+      if (!current) { current = { marker: null, body: [] }; blocks.push(current); }
+      current.body.push(line);
+    }
+  }
+  return { prefix, blocks };
+}
+
+function joinBlocks({ prefix, blocks }) {
+  const out = prefix.slice();
+  for (const b of blocks) {
+    if (b.marker !== null) out.push(b.marker);
+    out.push(...b.body);
+  }
+  return out.join('\n');
+}
+
+function maxMarkerNumber(blocks) {
+  let max = 0;
+  for (const b of blocks) {
+    const m = b.marker && b.marker.trim().match(MARKER_RE);
+    if (m && m[1]) max = Math.max(max, Number(m[1]));
+  }
+  return max;
+}
+
+/* Пустые строки в конце блока — разделитель перед следующей карточкой в общем тексте. */
+function trailingBlankCount(body) {
+  let n = 0;
+  while (n < body.length && !body[body.length - 1 - n].trim()) n++;
+  return n;
+}
+
+/* Между карточками в общем тексте — пустая строка, чтобы его было удобно читать. */
+function tidySeparators(blocks) {
+  blocks.forEach((b, i) => {
+    if (i < blocks.length - 1 && !trailingBlankCount(b.body)) b.body.push('');
   });
-  const blocks = starts.map((from, i) => lines.slice(from, i + 1 < starts.length ? starts[i + 1] : lines.length));
-  return { blocks, maxNum, markerRe };
+}
+
+/* Текст карточки без метки и без хвостовых пустых строк — то, что видно в форме. */
+function cardBody(cardIndex) {
+  const b = splitBlocks(state.cardsText).blocks[cardIndex];
+  if (!b) return '';
+  return b.body.slice(0, b.body.length - trailingBlankCount(b.body)).join('\n');
+}
+
+function setCardBody(cardIndex, markup) {
+  const parts = splitBlocks(state.cardsText);
+  const b = parts.blocks[cardIndex];
+  if (!b) return;
+  const tail = b.body.slice(b.body.length - trailingBlankCount(b.body));
+  b.body = (markup ? markup.split('\n') : []).concat(tail);
+  state.cardsText = joinBlocks(parts);
 }
 
 /*
- * Дублирует карточку карусели: копирует её текстовый блок (включая метку)
- * сразу после неё, с новым, ещё не занятым номером в метке — чтобы у копии
- * сразу был свой стабильный ключ (см. cardKeys), а не тот же, что у оригинала.
- * Вместе с текстом переносятся фото, ручной стиль и трансформация.
+ * Переносит фото/стиль/трансформацию, если у карточек на тех же позициях
+ * поменялись ключи (см. cardKeys) — например, метка //3 стала //3-.
  */
+function remapCardKeys(oldKeys, newKeys) {
+  for (const store of [state.photosById, state.cardStylesById, state.transformsById]) {
+    const moved = [];
+    oldKeys.forEach((key, i) => {
+      const next = newKeys[i];
+      if (next !== undefined && next !== key && key in store) { moved.push([next, store[key]]); delete store[key]; }
+    });
+    for (const [key, value] of moved) store[key] = value;
+  }
+}
+
+/* После любой правки структуры: пересобрать карточки, интерфейс и черновик. */
+function commitCardsText() {
+  syncCards();
+  refreshEditor();
+  saveProject();
+}
+
+/* Новая пустая карточка сразу после слайда afterIndex (0 — после обложки). */
+function addCard(afterIndex = state.current) {
+  pushUndo();
+  const parts = splitBlocks(state.cardsText);
+  const pos = clamp(afterIndex, 0, parts.blocks.length);
+  const num = maxMarkerNumber(parts.blocks) + 1;
+  parts.blocks.splice(pos, 0, { marker: '//' + num, body: [''] });
+  tidySeparators(parts.blocks);
+  state.cardsText = joinBlocks(parts);
+  syncCards();
+  state.current = pos + 1;
+  commitCardsText();
+  setTab('slide');
+  const editor = document.getElementById('cardEditor');
+  if (editor) editor.focus();
+}
+
+/*
+ * Дублирует карточку: копия её блока сразу за ней, с новым, ещё не занятым
+ * номером в метке — чтобы у копии был свой стабильный ключ. Вместе с
+ * текстом переносятся фото, ручной стиль и трансформация.
+ */
+async function duplicateCard(cardIndex) {
+  const parts = splitBlocks(state.cardsText);
+  const src = parts.blocks[cardIndex];
+  if (!src) return;
+  pushUndo();
+  const m = src.marker && src.marker.trim().match(MARKER_RE);
+  const sign = (m && m[2] === '-') ? '-' : '';
+  const copy = { marker: '//' + (maxMarkerNumber(parts.blocks) + 1) + sign, body: src.body.slice() };
+  parts.blocks.splice(cardIndex + 1, 0, copy);
+  tidySeparators(parts.blocks);
+
+  const oldKey = state.cardIds[cardIndex];
+  state.cardsText = joinBlocks(parts);
+  syncCards();
+  const newKey = state.cardIds[cardIndex + 1];
+  if (oldKey && newKey && oldKey !== newKey) {
+    if (state.photosById[oldKey]) {
+      try { state.photosById[newKey] = await cloneMediaForDuplicate(state.photosById[oldKey]); }
+      catch (err) { say('Не удалось скопировать видео: ' + err.message); }
+    }
+    if (state.cardStylesById[oldKey]) state.cardStylesById[newKey] = Object.assign({}, state.cardStylesById[oldKey]);
+    if (state.transformsById[oldKey]) state.transformsById[newKey] = Object.assign({}, state.transformsById[oldKey]);
+  }
+  state.current = cardIndex + 2;   // +1 за обложку, +1 — это уже сама копия
+  commitCardsText();
+  say('Карточка продублирована');
+}
+
+/*
+ * Переставляет карточку: переставляется её блок в тексте. Фото/стиль/
+ * трансформация переезжают сами — они привязаны к метке, а не к позиции.
+ */
+function moveCard(from, to) {
+  const parts = splitBlocks(state.cardsText);
+  if (from === to || from < 0 || to < 0 || from >= parts.blocks.length || to >= parts.blocks.length) return;
+  pushUndo();
+  parts.blocks.forEach((b, i) => { b.key = state.cardIds[i]; });
+  const [moved] = parts.blocks.splice(from, 1);
+  parts.blocks.splice(to, 0, moved);
+  // карточка без метки может быть только первой — при перестановке даём ей
+  // метку, а её фото и стиль переносим на новый ключ
+  parts.blocks.forEach((b, i) => {
+    if (b.marker === null && i > 0) b.marker = '//' + (maxMarkerNumber(parts.blocks) + 1);
+  });
+  tidySeparators(parts.blocks);
+  state.cardsText = joinBlocks(parts);
+  syncCards();
+  remapCardKeys(parts.blocks.map(b => b.key), state.cardIds);
+  state.current = to + 1;
+  commitCardsText();
+}
+
+function deleteCard(cardIndex) {
+  const parts = splitBlocks(state.cardsText);
+  if (!parts.blocks[cardIndex]) return;
+  pushUndo();
+  const key = state.cardIds[cardIndex];
+  parts.blocks.splice(cardIndex, 1);
+  tidySeparators(parts.blocks);
+  if (key) {
+    delete state.photosById[key];
+    delete state.cardStylesById[key];
+    delete state.transformsById[key];
+  }
+  state.cardsText = joinBlocks(parts);
+  state.current = Math.min(state.current, parts.blocks.length);
+  commitCardsText();
+  say('Карточка удалена — вернуть можно через ⌘Z');
+}
+
+/* «Фото на карточке»: метка //N (фото можно) ↔ //N- (всегда белая). */
+function setCardUsePhoto(cardIndex, usePhoto) {
+  const parts = splitBlocks(state.cardsText);
+  const b = parts.blocks[cardIndex];
+  if (!b) return;
+  pushUndo();
+  const m = b.marker && b.marker.trim().match(MARKER_RE);
+  const num = (m && m[1]) || String(maxMarkerNumber(parts.blocks) + 1);
+  b.marker = '//' + num + (usePhoto ? '' : '-');
+  const oldKeys = state.cardIds.slice();
+  state.cardsText = joinBlocks(parts);
+  syncCards();
+  remapCardKeys(oldKeys, state.cardIds);
+  commitCardsText();
+}
+
+/* Очищает все слайды текущего проекта (сам черновик остаётся). */
+function clearAll() {
+  if (!confirm('Очистить обложку и все карточки? Вернуть можно через ⌘Z.')) return;
+  pushUndo();
+  Object.assign(state.cover, { title: '', body: '', img: null, zoom: 1, panX: 0, panY: 0, rotate: 0,
+    grayscale: false, brightness: 100, contrast: 100 });
+  state.cardsText = '//1\n';
+  state.photosById = {};
+  state.cardStylesById = {};
+  state.transformsById = {};
+  state.current = 0;
+  commitCardsText();
+  say('Слайды очищены');
+}
+
 /*
  * Копия медиа для дублированной карточки. Фото — одна и та же декодированная
  * картинка, ссылку можно смело шарить между двумя ключами. Видео — нет: это
@@ -681,447 +934,6 @@ function cloneMediaForDuplicate(media) {
     wirePreviewLoop(clone);
     clone.src = media.currentSrc || media.src;
   });
-}
-
-async function duplicateCard(index) {
-  if (index < 0 || index >= state.cards.length) return;
-  const { blocks, maxNum, markerRe } = splitCardBlocks(state.cardsText);
-  if (index >= blocks.length) return;
-  pushUndo();
-
-  const copy = blocks[index].slice();
-  const markerMatch = copy[0].trim().match(markerRe);
-  const sign = (markerMatch && markerMatch[2]) || '';
-  copy[0] = '//' + (maxNum + 1) + sign;   // у копии — свежий, точно не занятый номер
-
-  const oldKey = state.cardIds[index];
-  blocks.splice(index + 1, 0, copy);
-  state.cardsText = blocks.map(b => b.join('\n')).join('\n');
-  setEditorValue(state.cardsText, false);
-  syncCards(); buildPreviews(); saveProject();
-
-  const newKey = state.cardIds[index + 1];
-  if (oldKey && newKey && oldKey !== newKey) {
-    if (state.photosById[oldKey]) {
-      try {
-        state.photosById[newKey] = await cloneMediaForDuplicate(state.photosById[oldKey]);
-      } catch (err) {
-        say('Не удалось скопировать видео: ' + err.message);
-      }
-    }
-    if (state.cardStylesById[oldKey]) state.cardStylesById[newKey] = Object.assign({}, state.cardStylesById[oldKey]);
-    if (state.transformsById[oldKey]) state.transformsById[newKey] = Object.assign({}, state.transformsById[oldKey]);
-    syncCards(); buildPreviews(); saveProject();
-  }
-  selectCard(index + 2);   // +1 за обложку, +1 — это уже сама копия
-  say('Карточка продублирована');
-}
-
-/*
- * Переставляет карточку карусели на новую позицию, просто переставляя её
- * текстовый блок в state.cardsText. Фото/стиль/трансформация переезжают
- * вместе с блоком сами собой — они привязаны к метке, а не к позиции
- * (см. cardKeys), так что здесь ничего досогласовывать не нужно.
- */
-function reorderCard(sourceIndex, targetIndex) {
-  if (sourceIndex === targetIndex) return;
-  const { blocks } = splitCardBlocks(state.cardsText);
-  if (sourceIndex < 0 || sourceIndex >= blocks.length || targetIndex < 0 || targetIndex >= blocks.length) return;
-  pushUndo();
-
-  const [moved] = blocks.splice(sourceIndex, 1);
-  blocks.splice(targetIndex, 0, moved);
-
-  state.cardsText = blocks.map(b => b.join('\n')).join('\n');
-  setEditorValue(state.cardsText, false);
-  syncCards(); buildPreviews(); saveProject();
-  selectCard(targetIndex + 1);
-  say('Карточка перемещена');
-}
-
-function allCards() {
-  return [state.cover].concat(state.cards);
-}
-
-function cardLabel(i) {
-  return i === 0 ? 'Обложка' : 'Карточка ' + i;
-}
-
-/* ---------------------------------------------------------------- превью */
-
-function buildPreviews() {
-  const list = allCards();
-  el.previews.innerHTML = '';
-
-  list.forEach((card, i) => {
-    const item = document.createElement('div');
-    item.className = 'preview-item';
-
-    const label = document.createElement('p');
-    label.className = 'section-label';
-    label.textContent = cardLabel(i);
-    item.appendChild(label);
-
-    const isMultiSelected = i > 0 && state.selectedKeys.has(state.cardIds[i - 1]);
-    const frame = document.createElement('div');
-    frame.className = 'frame' + (i === state.current ? ' selected' : '') +
-      (isMultiSelected ? ' multi-selected' : '');
-    frame.dataset.index = String(i);
-    frame.appendChild(document.createElement('canvas'));
-
-    if (i > 0) {
-      // ручка для перетаскивания — отдельно от рамки, чтобы не мешать
-      // панорамированию фото внутри рамки (там drag уже занят под сдвиг кадра)
-      const grip = document.createElement('span');
-      grip.className = 'drag-handle';
-      grip.textContent = '⠿';
-      grip.title = 'Перетащи, чтобы поменять карточки местами';
-      grip.draggable = true;
-      grip.addEventListener('dragstart', e => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/x-card-index', String(i - 1));
-        frame.classList.add('dragging');
-      });
-      grip.addEventListener('dragend', () => frame.classList.remove('dragging'));
-      label.appendChild(grip);
-    }
-
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = 'Предпросмотр';
-    frame.appendChild(empty);
-
-    const warn = document.createElement('div');
-    warn.className = 'warn';
-    warn.textContent = '!';
-    warn.title = 'Текст не помещается на карточку — уменьши кегль/межстрочный интервал или перенеси часть текста на другую карточку';
-    frame.appendChild(warn);
-
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'remove-photo';
-    removeBtn.textContent = '✕';
-    removeBtn.title = 'Убрать фото с этой карточки';
-    // pointerdown у рамки запускает панорамирование фото — гасим всплытие
-    // именно здесь, иначе клик по кнопке ещё и подхватится как начало сдвига кадра
-    removeBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    removeBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      removePhoto(i);
-    });
-    frame.appendChild(removeBtn);
-
-    if (i > 0) {
-      // чекбокс множественного выбора — виден всегда, не только когда отмечен,
-      // чтобы было понятно, что так вообще можно (и работало тапом на телефоне,
-      // где нет ни ⌘, ни Shift)
-      const selectBadge = document.createElement('button');
-      selectBadge.type = 'button';
-      selectBadge.className = 'select-badge';
-      selectBadge.title = 'Выбрать карточку (для массового удаления/экспорта)';
-      selectBadge.addEventListener('pointerdown', e => e.stopPropagation());
-      selectBadge.addEventListener('click', e => {
-        e.stopPropagation();
-        toggleCardSelection(i, 'toggle');
-      });
-      frame.appendChild(selectBadge);
-    }
-
-    // кнопки видео — сама видимость переключается классом .has-video
-    // в renderAll() (появляется/пропадает по факту, что сейчас лежит в card.img)
-    const playBtn = document.createElement('button');
-    playBtn.type = 'button';
-    playBtn.className = 'play-video';
-    playBtn.textContent = '▶';
-    playBtn.title = 'Проиграть/остановить предпросмотр видео';
-    playBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    playBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleVideoPreviewPlayback(i);
-    });
-    frame.appendChild(playBtn);
-
-    const trimBtn = document.createElement('button');
-    trimBtn.type = 'button';
-    trimBtn.className = 'edit-trim';
-    trimBtn.textContent = '✂';
-    trimBtn.title = 'Изменить обрезку видео';
-    trimBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    trimBtn.addEventListener('click', async e => {
-      e.stopPropagation();
-      const card = allCards()[i];
-      if (!card || !(card.img instanceof HTMLVideoElement)) return;
-      await askVideoTrim([{ card, index: i }], {
-        title: 'Обрезка видео',
-        hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте.',
-        confirmLabel: 'Готово',
-      });
-    });
-    frame.appendChild(trimBtn);
-
-    // делит нижний левый угол с «✂» — CSS показывает то одно, то другое
-    // в зависимости от .has-video (видео уже можно поменять через ✕ + обычную загрузку)
-    const findBtn = document.createElement('button');
-    findBtn.type = 'button';
-    findBtn.className = 'find-photo';
-    findBtn.textContent = '🔍';
-    findBtn.title = 'Найти фото в интернете';
-    findBtn.addEventListener('pointerdown', e => e.stopPropagation());
-    findBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      openStockPhotoModal(i);
-    });
-    frame.appendChild(findBtn);
-
-    attachFrameEvents(frame, i);
-    item.appendChild(frame);
-    el.previews.appendChild(item);
-  });
-
-  scheduleRender();
-}
-
-/*
- * Пачка фото, брошенная не точно на карточку (например, в промежуток между
- * превью), раскладывается по карточкам карусели по порядку начиная с первой.
- * Одиночное фото на конкретную карточку по-прежнему обрабатывает сама
- * карточка (attachFrameEvents) и останавливает всплытие — сюда долетают
- * только пачки и промахи мимо рамок.
- */
-function wirePreviewsBulkDrop() {
-  el.previews.addEventListener('dragover', e => e.preventDefault());
-  el.previews.addEventListener('drop', async e => {
-    e.preventDefault();
-    const images = [...(e.dataTransfer.files || [])].filter(isMediaFile);
-    if (images.length <= 1) return;
-    const n = await distributePhotos(images, 1);
-    say('Разложено по карточкам: ' + n);
-  });
-}
-
-function attachFrameEvents(frame, index) {
-  // работает с мышью, пальцем и пером
-  frame.addEventListener('pointerdown', e => {
-    // Ctrl/Cmd/Shift+клик — это множественный выбор, а не начало панорамирования фото
-    if (index > 0 && (e.ctrlKey || e.metaKey || e.shiftKey)) {
-      toggleCardSelection(index, e.shiftKey ? 'range' : 'toggle');
-      return;
-    }
-    if (state.selectedKeys.size) clearSelection();   // обычный клик снимает множественный выбор
-    selectCard(index);
-    const card = allCards()[index];
-    if (!card || !card.img || !card.usePhoto) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    e.preventDefault();
-    try { frame.setPointerCapture(e.pointerId); } catch { /* не критично */ }
-
-    const sx = e.clientX, sy = e.clientY;
-    const ox = card.panX, oy = card.panY;
-    const ratio = FORMATS[state.format][0] / frame.clientWidth;
-
-    const move = ev => {
-      card.panX = ox - (ev.clientX - sx) * ratio;
-      card.panY = oy - (ev.clientY - sy) * ratio;
-      commitTransform(index);
-      syncTransformControls();
-      scheduleRender();
-    };
-    const up = ev => {
-      frame.removeEventListener('pointermove', move);
-      frame.removeEventListener('pointerup', up);
-      frame.removeEventListener('pointercancel', up);
-      try { frame.releasePointerCapture(ev.pointerId); } catch { /* не критично */ }
-    };
-    frame.addEventListener('pointermove', move);
-    frame.addEventListener('pointerup', up);
-    frame.addEventListener('pointercancel', up);
-  });
-
-  // щипок двумя пальцами — масштаб
-  let pinchStart = null;
-  frame.addEventListener('touchstart', e => {
-    if (e.touches.length !== 2) return;
-    const card = allCards()[index];
-    if (!card || !card.img || !card.usePhoto) return;
-    const [a, b] = e.touches;
-    pinchStart = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: card.zoom };
-  }, { passive: true });
-
-  frame.addEventListener('touchmove', e => {
-    if (!pinchStart || e.touches.length !== 2) return;
-    const card = allCards()[index];
-    if (!card) return;
-    e.preventDefault();
-    const [a, b] = e.touches;
-    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchStart.zoom * (dist / pinchStart.dist)));
-    commitTransform(index);
-    syncTransformControls();
-    scheduleRender();
-  }, { passive: false });
-
-  frame.addEventListener('touchend', () => { pinchStart = null; }, { passive: true });
-
-  frame.addEventListener('wheel', e => {
-    const card = allCards()[index];
-    if (!card || !card.img || !card.usePhoto) return;
-    e.preventDefault();
-    selectCard(index);
-    card.zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, card.zoom + (e.deltaY > 0 ? -0.05 : 0.05)));
-    commitTransform(index);
-    syncTransformControls();
-    scheduleRender();
-  }, { passive: false });
-
-  frame.addEventListener('dragover', e => { e.preventDefault(); frame.classList.add('dropping'); });
-  frame.addEventListener('dragleave', () => frame.classList.remove('dropping'));
-  frame.addEventListener('drop', async e => {
-    e.preventDefault();
-    e.stopPropagation();   // иначе сработает ещё и общий обработчик пачки на #previews
-    frame.classList.remove('dropping');
-
-    const dragIndex = e.dataTransfer.getData('text/x-card-index');
-    if (dragIndex !== '' && index > 0) {
-      reorderCard(Number(dragIndex), index - 1);
-      return;
-    }
-
-    selectCard(index);
-    const images = [...(e.dataTransfer.files || [])].filter(isMediaFile);
-    if (!images.length) return;
-    if (images.length === 1) {
-      await setPhoto(index, images[0]);
-    } else {
-      const n = await distributePhotos(images, index);
-      say('Разложено по карточкам: ' + n);
-    }
-  });
-}
-
-function selectCard(index, options = {}) {
-  state.current = index;
-  if (!options.keepZone) state.focusZone = 'preview';
-  [...el.previews.querySelectorAll('.frame')].forEach(f => {
-    f.classList.toggle('selected', Number(f.dataset.index) === index);
-  });
-  syncTransformControls();
-}
-
-/*
- * Отмечает/снимает карточку в множественном выборе (для массового удаления —
- * см. deleteSelectedCards). Выбор хранится по ключу карточки (cardKeys),
- * а не по позиции, — вставка карточки выше по тексту не должна незаметно
- * подменить выбор на другую карточку, та же логика, что у фото и стилей.
- *
- * mode: 'toggle' — переключить эту карточку; 'range' — выбрать диапазон
- * от последней тронутой (state.selectAnchor) до этой (Shift+клик).
- */
-function toggleCardSelection(index, mode) {
-  if (index <= 0) return;   // обложка не участвует в массовых действиях
-  const i = index - 1;
-  const key = state.cardIds[i];
-  if (!key) return;
-
-  if (mode === 'range' && state.selectAnchor !== null) {
-    const [a, b] = [state.selectAnchor, i].sort((x, y) => x - y);
-    for (let k = a; k <= b; k++) {
-      const k2 = state.cardIds[k];
-      if (k2) state.selectedKeys.add(k2);
-    }
-  } else {
-    if (state.selectedKeys.has(key)) state.selectedKeys.delete(key);
-    else state.selectedKeys.add(key);
-    state.selectAnchor = i;
-  }
-  selectCard(index, { keepZone: true });
-  syncSelectionUI();
-}
-
-function clearSelection() {
-  if (!state.selectedKeys.size) return;
-  state.selectedKeys.clear();
-  state.selectAnchor = null;
-  syncSelectionUI();
-}
-
-function syncSelectionUI() {
-  [...el.previews.querySelectorAll('.frame')].forEach(f => {
-    const i = Number(f.dataset.index);
-    const key = i > 0 ? state.cardIds[i - 1] : null;
-    f.classList.toggle('multi-selected', Boolean(key && state.selectedKeys.has(key)));
-  });
-  const btnDelete = document.getElementById('btnDeleteSelected');
-  if (btnDelete) btnDelete.disabled = !state.selectedKeys.size;
-}
-
-/*
- * Удаляет выбранные карточки целиком — текст, фото, стиль. Единственный
- * способ убрать карточку сейчас; до этого приходилось вручную вырезать
- * её блок из текста. Отменяется через ⌘Z, как и всё остальное.
- */
-function deleteSelectedCards() {
-  if (!state.selectedKeys.size) return;
-  const n = state.selectedKeys.size;
-  if (!confirm(`Удалить выбранные карточки (${n})? Можно будет вернуть через ⌘Z.`)) return;
-
-  pushUndo();
-  const { blocks } = splitCardBlocks(state.cardsText);
-  const keep = blocks.filter((_, i) => !state.selectedKeys.has(state.cardIds[i]));
-  for (const key of state.selectedKeys) {
-    delete state.photosById[key];
-    delete state.cardStylesById[key];
-    delete state.transformsById[key];
-  }
-  state.selectedKeys.clear();
-  state.selectAnchor = null;
-  state.cardsText = keep.map(b => b.join('\n')).join('\n');
-  setEditorValue(state.cardsText, false);
-  syncCards(); buildPreviews(); saveProject();
-  syncSelectionUI();
-  say('Удалено карточек: ' + n);
-}
-
-/* Ползунки трансформации показывают значения выбранной карточки. */
-function syncTransformControls() {
-  const card = allCards()[state.current];
-  if (!card) return;
-  el.rngScale.value = String(Math.round(((card.zoom || 1) - 1) * 100));
-  el.rngOffsetX.value = String(Math.round(card.panX || 0));
-  el.rngOffsetY.value = String(Math.round(card.panY || 0));
-  el.rngRotate.value = String(Math.round(card.rotate || 0));
-  el.chkGrayscale.checked = Boolean(card.grayscale);
-  el.rngBrightness.value = String(Math.round(card.brightness || 100));
-  el.rngContrast.value = String(Math.round(card.contrast || 100));
-  paintTransformOutputs();
-}
-
-function paintTransformOutputs() {
-  el.scaleOut.textContent = el.rngScale.value + '%';
-  el.offsetXOut.textContent = el.rngOffsetX.value + ' пикселей';
-  el.offsetYOut.textContent = el.rngOffsetY.value + ' пикселей';
-  el.rotateOut.textContent = el.rngRotate.value + '°';
-  el.brightnessOut.textContent = el.rngBrightness.value + '%';
-  el.contrastOut.textContent = el.rngContrast.value + '%';
-}
-
-/* Возвращает масштаб/сдвиг/поворот выбранной карточки к значениям по
-   умолчанию — фильтры (чёрно-белое/яркость/контраст) не трогает, это
-   отдельная настройка. */
-function resetTransform() {
-  const index = state.current;
-  const card = allCards()[index];
-  if (!card || !card.img) return;
-  pushUndo();
-  card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
-  if (index === 0) {
-    state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0; state.cover.rotate = 0;
-  } else {
-    commitTransform(index);
-  }
-  syncTransformControls();
-  scheduleRender();
-  saveProject();
-  say('Трансформация сброшена');
 }
 
 /* ------------------------------------------------------------------ фото */
@@ -1252,7 +1064,8 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
         card.grayscale = false; card.brightness = 100; card.contrast = 100;
       }
     }
-    selectCard(index);
+    renderSlidesList();
+    selectSlide(index, { force: true });
     scheduleRender();
     let statusText = media instanceof HTMLVideoElement ? 'Видео добавлено' : 'Фото добавлено';
     if (!(media instanceof HTMLVideoElement)) {
@@ -1268,7 +1081,7 @@ async function setPhoto(index, file, { skipUndo = false } = {}) {
       if (card) {
         await askVideoTrim([{ card, index }], {
           title: 'Обрезка видео',
-          hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте. Потом это можно поменять кнопкой «✂» на превью.',
+          hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте. Потом это можно поменять кнопкой «Обрезать».',
           confirmLabel: 'Готово',
         });
       }
@@ -1283,6 +1096,7 @@ function removePhoto(index) {
   const card = allCards()[index];
   if (!card || !card.img) return;
   const wasVideo = card.img instanceof HTMLVideoElement;
+  if (wasVideo) { card.img._previewPlaying = false; card.img.pause(); }
   pushUndo();
   if (index === 0) {
     state.cover.img = null;
@@ -1296,7 +1110,7 @@ function removePhoto(index) {
     card.img = null; card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
     card.grayscale = false; card.brightness = 100; card.contrast = 100;
   }
-  scheduleRender();
+  refreshEditor();
   say(wasVideo ? 'Видео убрано' : 'Фото убрано');
 }
 
@@ -1322,344 +1136,226 @@ async function distributePhotos(images, startIndex) {
   return used;
 }
 
-/* --------------------------------------------------------- поиск фото */
-
-/* Заголовок/первая строка карточки без разметки — подставляется в поле поиска при открытии окна. */
-function stripMarkupForQuery(text) {
-  return String(text || '')
-    .replace(/\v[^\v]*\v/g, '')
-    .replace(/\*\*/g, '')
-    .replace(/_/g, '')
-    .trim();
-}
-
-function stockQueryFor(index) {
-  const card = allCards()[index];
-  if (!card) return '';
-  if (index === 0) return stripMarkupForQuery(state.cover.title || state.cover.body);
-  const firstLine = (card.lines || []).find(l => l.trim());
-  return stripMarkupForQuery(firstLine);
-}
-
+/* ---------------------------------------------------------- отрисовка */
 /*
- * Четыре источника, у каждого свой формат ответа и свои параметры —
- * приводим к общему виду
- * { id, thumb, full, width, height, source, credit, creditUrl }.
- * Ни одна из функций не бросает исключение — при ошибке просто пустой
- * массив, чтобы один упавший источник не срывал поиск по остальным
- * (см. searchStockPhotos, Promise.all).
+ * Превью рисуются тем же renderCard(), что и экспорт, — видно ровно то, что
+ * получится. Большое превью (сцена) — текущий слайд под размер окна,
+ * миниатюры слева — все слайды. Попутно запоминается overflow каждого
+ * слайда (текст не помещается) — для предупреждения под сценой и точки
+ * у миниатюры.
  */
-async function searchPixabay(query, orientation, page) {
-  if (!PIXABAY_API_KEY || PIXABAY_API_KEY.startsWith('ВАШ_')) return [];
-  const params = new URLSearchParams({
-    key: PIXABAY_API_KEY,
-    q: query,
-    image_type: 'photo',
-    orientation: orientation === 'horizontal' || orientation === 'vertical' ? orientation : 'all',
-    min_width: String(STOCK_MIN_SIZE),
-    min_height: String(STOCK_MIN_SIZE),
-    safesearch: 'true',
-    per_page: String(STOCK_PER_PAGE),
-    page: String(page),
-  });
-  try {
-    const res = await fetch('https://pixabay.com/api/?' + params);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.hits || []).map(h => ({
-      id: 'pixabay-' + h.id,
-      thumb: h.webformatURL,
-      full: h.largeImageURL || h.webformatURL,
-      width: h.imageWidth,
-      height: h.imageHeight,
-      source: 'Pixabay',
-      credit: h.user,
-      creditUrl: h.pageURL,
-    }));
-  } catch { return []; }
-}
-
-async function searchPexels(query, orientation, page) {
-  if (!PEXELS_API_KEY || PEXELS_API_KEY.startsWith('ВАШ_')) return [];
-  const params = new URLSearchParams({ query, per_page: String(STOCK_PER_PAGE), page: String(page) });
-  if (orientation === 'horizontal') params.set('orientation', 'landscape');
-  if (orientation === 'vertical') params.set('orientation', 'portrait');
-  try {
-    const res = await fetch('https://api.pexels.com/v1/search?' + params, {
-      headers: { Authorization: PEXELS_API_KEY },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.photos || [])
-      .filter(p => p.width >= STOCK_MIN_SIZE && p.height >= STOCK_MIN_SIZE)
-      .map(p => ({
-        id: 'pexels-' + p.id,
-        thumb: p.src && p.src.medium,
-        full: p.src && (p.src.large2x || p.src.large || p.src.original),
-        width: p.width,
-        height: p.height,
-        source: 'Pexels',
-        credit: p.photographer,
-        creditUrl: p.photographer_url || p.url,
-      }));
-  } catch { return []; }
-}
-
-/*
- * Openverse ключа не требует, но лицензии там разные — оставляем только
- * cc0/pdm (общественное достояние) и by/by-sa (коммерция и изменения
- * разрешены с указанием автора), остальное (NC — не для коммерции, ND —
- * нельзя изменять, а мы накладываем текст и лого) сразу исключаем через
- * параметр license. Размер у части результатов агрегатора не указан —
- * такие тоже отбрасываем, раз нельзя проверить «не меньше 720».
- */
-async function searchOpenverse(query, orientation, page) {
-  const params = new URLSearchParams({
-    q: query,
-    license: 'cc0,pdm,by,by-sa',
-    page: String(page),
-    page_size: String(STOCK_PER_PAGE),
-  });
-  if (orientation === 'horizontal') params.set('aspect_ratio', 'wide');
-  if (orientation === 'vertical') params.set('aspect_ratio', 'tall');
-  try {
-    const res = await fetch('https://api.openverse.org/v1/images/?' + params);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.results || [])
-      .filter(r => r.width >= STOCK_MIN_SIZE && r.height >= STOCK_MIN_SIZE)
-      .map(r => ({
-        id: 'openverse-' + r.id,
-        thumb: r.thumbnail || r.url,
-        full: r.url,
-        width: r.width,
-        height: r.height,
-        source: 'Openverse',
-        credit: r.creator,
-        creditUrl: r.foreign_landing_url,
-      }));
-  } catch { return []; }
-}
-
-/*
- * Unsplash требует не только ключ (Client-ID в заголовке Authorization), но
- * и по своим API Guidelines — обязательный «пинг» download_location при
- * реальном использовании фото (см. insertStockPhoto), иначе доступ к API
- * могут отозвать. thumb/full тут не то же самое, что «превью/полный размер»
- * у остальных источников буквально — urls.thumb это маленькая иконка для
- * сетки, urls.full — то же изображение в исходном разрешении.
- */
-async function searchUnsplash(query, orientation, page) {
-  if (!UNSPLASH_ACCESS_KEY || UNSPLASH_ACCESS_KEY.startsWith('ВАШ_')) return [];
-  const params = new URLSearchParams({
-    query, page: String(page), per_page: String(STOCK_PER_PAGE),
-  });
-  if (orientation === 'horizontal') params.set('orientation', 'landscape');
-  if (orientation === 'vertical') params.set('orientation', 'portrait');
-  try {
-    const res = await fetch('https://api.unsplash.com/search/photos?' + params, {
-      headers: { Authorization: 'Client-ID ' + UNSPLASH_ACCESS_KEY },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return (data.results || [])
-      .filter(r => r.width >= STOCK_MIN_SIZE && r.height >= STOCK_MIN_SIZE)
-      .map(r => ({
-        id: 'unsplash-' + r.id,
-        thumb: r.urls && r.urls.thumb,
-        full: r.urls && (r.urls.full || r.urls.regular),
-        width: r.width,
-        height: r.height,
-        source: 'Unsplash',
-        credit: r.user && r.user.name,
-        creditUrl: r.user && r.user.links && r.user.links.html,
-        downloadLocation: r.links && r.links.download_location,
-      }));
-  } catch { return []; }
-}
-
-/* Опрашивает все четыре источника разом и чередует результаты между ними,
-   а не склеивает по очереди — так в сетке сразу видно разнообразие. */
-async function searchStockPhotos(query, orientation, page) {
-  const lists = await Promise.all([
-    searchPixabay(query, orientation, page),
-    searchPexels(query, orientation, page),
-    searchUnsplash(query, orientation, page),
-    searchOpenverse(query, orientation, page),
-  ]);
-  const merged = [];
-  let more = true;
-  while (more) {
-    more = false;
-    for (const list of lists) {
-      if (list.length) { merged.push(list.shift()); more = true; }
-    }
-  }
-  return merged;
-}
-
-const stockModalState = { index: null, page: 1 };
-
-function openStockPhotoModal(index) {
-  stockModalState.index = index;
-  stockModalState.page = 1;
-  document.getElementById('spQuery').value = stockQueryFor(index);
-  document.getElementById('spOrientation').value = '';
-  document.getElementById('spGrid').innerHTML = '';
-  document.getElementById('spStatus').textContent = '';
-  document.getElementById('spMore').hidden = true;
-  document.getElementById('stockPhotoModal').hidden = false;
-  runStockSearch(true);
-}
-
-function closeStockPhotoModal() {
-  document.getElementById('stockPhotoModal').hidden = true;
-}
-
-async function runStockSearch(reset) {
-  const grid = document.getElementById('spGrid');
-  const status = document.getElementById('spStatus');
-  const moreBtn = document.getElementById('spMore');
-  const query = document.getElementById('spQuery').value.trim();
-  const orientation = document.getElementById('spOrientation').value;
-  if (!query) { status.textContent = 'Введи, что искать'; return; }
-  if (reset) { stockModalState.page = 1; grid.innerHTML = ''; }
-  status.textContent = 'Ищу…';
-  moreBtn.hidden = true;
-  const results = await searchStockPhotos(query, orientation, stockModalState.page);
-  status.textContent = results.length ? '' : 'Ничего не нашлось — попробуй другой запрос';
-  renderStockGrid(results);
-  moreBtn.hidden = !results.length;
-}
-
-function renderStockGrid(results) {
-  const grid = document.getElementById('spGrid');
-  results.forEach(r => {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'sp-thumb';
-    btn.title = (r.credit ? r.credit + ' — ' : '') + r.source;
-    const img = document.createElement('img');
-    img.src = r.thumb;
-    img.loading = 'lazy';
-    img.alt = '';
-    btn.appendChild(img);
-    const badge = document.createElement('span');
-    badge.className = 'sp-source';
-    badge.textContent = r.source;
-    btn.appendChild(badge);
-    btn.addEventListener('click', () => insertStockPhoto(r));
-    grid.appendChild(btn);
-  });
-}
-
-async function insertStockPhoto(result) {
-  const index = stockModalState.index;
-  closeStockPhotoModal();
-  say('Загружаю фото…');
-  try {
-    const res = await fetch(result.full);
-    if (!res.ok) throw new Error('bad response ' + res.status);
-    const blob = await res.blob();
-    await setPhoto(index, blob);
-  } catch (err) {
-    console.error('не удалось загрузить фото со стока', err);
-    say('Не удалось загрузить это фото — попробуй другое');
-    return;
-  }
-  if (result.downloadLocation) {
-    // Обязательный «пинг» по правилам Unsplash API при фактическом использовании фото —
-    // без него доступ к API могут отозвать. Ответ нам не нужен, ошибка не критична.
-    fetch(result.downloadLocation, { headers: { Authorization: 'Client-ID ' + UNSPLASH_ACCESS_KEY } })
-      .catch(() => {});
-  }
-}
-
-/* ---------------------------------------------------------------- рендер */
-
 let renderTimer = null;
 function scheduleRender() {
   clearTimeout(renderTimer);
-  renderTimer = setTimeout(renderAll, 60);
+  renderTimer = setTimeout(renderAll, 50);
 }
 
 function renderAll() {
-  if (!state.fontsReady) return;
+  if (!state.fontsReady || state.screen !== 'editor') return;
+  renderStage();
+  renderThumbs();
+  renderWarnings();
+  updateSlidesMeta();
+}
+
+function paintCard(canvas, card, index, cssWidth) {
   const [W, H] = FORMATS[state.format];
-  const scale = (PREVIEW_CSS_WIDTH * PREVIEW_SCALE) / W;
-  const assets = currentAssets();
-  const gradient = currentGradient();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.round(cssWidth * dpr));
+  canvas.height = Math.max(1, Math.round(cssWidth * dpr * H / W));
+  const scale = canvas.width / W;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  try {
+    const fixed = renderCard(ctx, card, [W, H], currentAssets(), currentGradient());
+    // сдвиг кадра renderCard ограничивает границами фото — запоминаем исправленный
+    card.panX = fixed.panX; card.panY = fixed.panY;
+    commitTransform(index);
+    state.overflow[index] = Boolean(fixed.overflow);
+  } catch (err) {
+    console.error('не удалось отрисовать слайд', index, err);
+  }
+}
+
+function renderStage() {
+  if (!state.fontsReady || state.screen !== 'editor') return;
+  const card = allCards()[state.current];
+  if (!card) return;
+  const [W, H] = FORMATS[state.format];
+  const cs = getComputedStyle(el.stage);
+  const availW = el.stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const availH = el.stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+  const fit = Math.min(Math.max(availW, 120) / W, Math.max(availH, 120) / H);
+  const cssW = Math.round(W * fit);
+  el.stageCanvas.style.width = cssW + 'px';
+  el.stageCanvas.style.height = Math.round(H * fit) + 'px';
+  paintCard(el.stageCanvas, card, state.current, cssW);
+  el.stageInner.classList.toggle('has-photo', hasPhoto(card));
+  renderStageOverlay(card);
+  el.slideCounter.textContent = (state.current + 1) + ' / ' + allCards().length;
+  document.getElementById('btnPrev').disabled = state.current <= 0;
+  document.getElementById('btnNext').disabled = state.current >= allCards().length - 1;
+}
+
+function renderThumbs() {
   const list = allCards();
-  const frames = [...el.previews.querySelectorAll('.frame')];
-
-  list.forEach((card, i) => {
-    const frame = frames[i];
-    if (!frame) return;
-    const canvas = frame.querySelector('canvas');
-    const empty = frame.querySelector('.empty');
-
-    const hasPhoto = Boolean(card.usePhoto && card.img);
-    const hasContent = hasPhoto ||
-      (card.kind === 'cover' ? (card.title || card.body) : card.lines.some(l => l.trim()));
-    empty.style.display = hasContent ? 'none' : 'grid';
-    frame.classList.toggle('has-photo', hasPhoto);
-    const isVideo = hasPhoto && card.img instanceof HTMLVideoElement;
-    frame.classList.toggle('has-video', isVideo);
-    if (isVideo) {
-      // глиф play/pause синхронизируем тут же, а не только в момент клика —
-      // buildPreviews() пересобирает разметку карточек на каждую правку текста
-      // и сбросил бы кнопку в «▶», пока видео на самом деле всё ещё играет
-      const playBtn = frame.querySelector('.play-video');
-      if (playBtn) playBtn.textContent = card.img.paused ? '▶' : '⏸';
-    }
-
-    canvas.width = Math.round(W * scale);
-    canvas.height = Math.round(H * scale);
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    try {
-      const fixed = renderCard(ctx, card, [W, H], assets, gradient);
-      card.panX = fixed.panX; card.panY = fixed.panY;
-      commitTransform(i);
-      frame.classList.toggle('overflow', Boolean(fixed.overflow));
-    } catch (err) {
-      console.error('не удалось отрисовать карточку', i, err);
-      say('Карточка ' + (i + 1) + ': ошибка отрисовки');
-    }
+  el.slidesList.querySelectorAll('.slide-item').forEach(item => {
+    const i = Number(item.dataset.index);
+    const canvas = item.querySelector('canvas');
+    if (list[i] && canvas) paintCard(canvas, list[i], i, canvas.clientWidth || 160);
   });
 }
 
-function renderFull(card, scale = state.exportScale) {
-  const [W, H] = FORMATS[state.format];
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
-  const ctx = canvas.getContext('2d');
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  renderCard(ctx, card, [W, H], currentAssets(), currentGradient());
-  return canvas;
+/*
+ * Поверх сцены: кнопка «Фото или видео» на пустом месте под фото, а у видео —
+ * «смотреть/пауза» и «обрезать». Разметка пересобирается, только когда
+ * меняется то, что в ней показано, — иначе во время проигрывания видео
+ * (отрисовка ~25 раз в секунду) кнопки бы мигали.
+ */
+let overlaySignature = '';
+function renderStageOverlay(card) {
+  const isVideo = hasPhoto(card) && card.img instanceof HTMLVideoElement;
+  const empty = canHavePhoto(card) && !card.img;
+  const sig = [state.current, empty, isVideo, isVideo && card.img.paused, card.kind].join('|');
+  if (sig === overlaySignature) return;
+  overlaySignature = sig;
+  el.stageOverlay.innerHTML = '';
+  const index = state.current;
+  if (empty) {
+    const hint = btn('slot-hint', 'image', 'Фото или видео', () => pickMediaFor(index));
+    // у карточки фото встаёт полосой сверху — туда и кнопку, чтобы не закрывать текст
+    if (card.kind !== 'cover') hint.style.top = '22%';
+    el.stageOverlay.append(hint);
+  }
+  if (isVideo) {
+    const playing = !card.img.paused;
+    el.stageOverlay.append(h('div', { class: 'media-tools' },
+      btn('video', playing ? 'pause' : 'play', playing ? 'Пауза' : 'Смотреть', () => toggleVideoPreviewPlayback(index)),
+      btn('', 'scissors', 'Обрезать', () => openTrimFor(index))));
+  }
 }
 
-/* ------------------------------------------------------ превью видео play */
+/* Во сколько раз фото растягивается при экспорте (больше 1 — пикселей не хватает). */
+function photoUpscale(card) {
+  if (!hasPhoto(card)) return 0;
+  const img = card.img;
+  const iw = img.videoWidth || img.naturalWidth || img.width;
+  const ih = img.videoHeight || img.naturalHeight || img.height;
+  if (!iw || !ih) return 0;
+  const [W, H] = FORMATS[state.format];
+  // обложка — фото на весь слайд; у карточки фото полосой во всю ширину
+  const need = card.kind === 'cover' ? Math.max(W / iw, H / ih) : W / iw;
+  return need * Math.max(card.zoom || 1, 1) * state.exportScale;
+}
+
+function renderWarnings() {
+  const card = allCards()[state.current];
+  el.warnings.innerHTML = '';
+  if (!card) return;
+  const warn = (text, action) => {
+    const node = h('span', { class: 'warn', icon: 'warning' });
+    node.append(document.createTextNode(text));
+    if (action) node.append(btn('btn btn-sm', 'magic-wand', action.label, action.run));
+    el.warnings.append(node);
+  };
+  if (state.overflow[state.current]) {
+    warn('Текст не помещается', { label: 'Уместить', run: () => autoFit(state.current) });
+  }
+  if (card.img instanceof HTMLImageElement && hasPhoto(card)) {
+    const dup = findDuplicatePhotoOwner(state.current, card.img.src);
+    if (dup !== null) warn('Это фото уже есть: ' + cardLabel(dup).toLowerCase());
+  }
+  if (photoUpscale(card) > UPSCALE_WARN) warn('Фото мелковато — может выйти мыльным');
+  if (!el.warnings.children.length) {
+    const ok = h('span', { class: 'ok', icon: 'check' });
+    ok.append(document.createTextNode('Всё помещается'));
+    el.warnings.append(ok);
+  }
+}
 
 /*
- * Кнопка «▶» на карточке с видео проигрывает именно обрезанный фрагмент
- * (video.trimStart..trimEnd) в зацикленном режиме прямо в превью — не сырое
- * видео целиком. Пока хоть одно видео играет, renderAll() гонится в цикле
- * requestAnimationFrame (не через обычный debounce scheduleRender), чтобы
- * движение было видно в канвасе; как только все видео на паузе, цикл сам
- * останавливается.
+ * «Уместить»: уменьшает кегль слайда шаг за шагом, пока текст не перестанет
+ * вылезать, но не ниже FIT_MIN_RATIO от макета. Примеряется на невидимом
+ * холсте тем же renderCard(), так что результат совпадает с экспортом.
+ */
+function autoFit(index) {
+  const card = allCards()[index];
+  if (!card) return;
+  const [W, H] = FORMATS[state.format];
+  const ctx = document.createElement('canvas').getContext('2d');
+  const fits = c => !renderCard(ctx, c, [W, H], currentAssets(), currentGradient()).overflow;
+
+  if (card.kind === 'cover') {
+    const t0 = state.coverTitleSize, b0 = state.coverBodySize;
+    const minT = Math.round(LAYOUTS.cover.titleSize * FIT_MIN_RATIO);
+    const minB = Math.round(LAYOUTS.cover.bodySize * FIT_MIN_RATIO);
+    for (let k = 1; k <= 60; k++) {
+      const t = Math.max(minT, Math.round(t0 * (1 - k * 0.01)));
+      const b = Math.max(minB, Math.round(b0 * (1 - k * 0.01)));
+      if (fits(Object.assign({}, card, { style: { size: b, headingSize: t } }))) {
+        pushUndo();
+        state.coverTitleSize = t;
+        state.coverBodySize = b;
+        syncTemplateDesign();
+        afterStyleChange(true);
+        say('Кегль обложки: заголовок ' + t + ', подзаголовок ' + b);
+        return;
+      }
+      if (t === minT && b === minB) break;
+    }
+  } else {
+    const key = state.cardIds[index - 1];
+    const style = Object.assign(defaultTypography(card), card.style || {});
+    const min = Math.round(defaultTypography(card).size * FIT_MIN_RATIO);
+    for (let s = style.size - 1; s >= min; s--) {
+      if (fits(Object.assign({}, card, { style: Object.assign({}, card.style, { size: s }) }))) {
+        pushUndo();
+        state.cardStylesById[key] = Object.assign({}, state.cardStylesById[key] || {}, { size: s });
+        afterStyleChange(true);
+        say('Кегль карточки уменьшен до ' + s);
+        return;
+      }
+    }
+  }
+  say('Даже при ' + Math.round(FIT_MIN_RATIO * 100) + '% кегля не помещается — сократи текст или перенеси часть на другую карточку');
+}
+
+/* Возвращает масштаб/сдвиг/поворот слайда к исходным — фильтры не трогает. */
+function resetTransform(index = state.current) {
+  const card = allCards()[index];
+  if (!card || !card.img) return;
+  pushUndo();
+  card.zoom = 1; card.panX = 0; card.panY = 0; card.rotate = 0;
+  commitTransform(index);
+  renderAll();
+  syncTransformInputs();
+  say('Кадр сброшен');
+}
+
+/* ------------------------------------------------ превью видео: play */
+/*
+ * «Смотреть» проигрывает именно обрезанный фрагмент (trimStart..trimEnd)
+ * по кругу прямо на сцене. Пока хоть одно видео играет, сцена
+ * перерисовывается в цикле requestAnimationFrame (~25 кадров/с), а не через
+ * обычный отложенный scheduleRender; как только всё на паузе, цикл
+ * останавливается сам.
  */
 let previewPlayRaf = null;
 let previewPlayLastTs = 0;
 function ensurePreviewPlayLoop() {
   if (previewPlayRaf) return;
   const tick = ts => {
-    const anyPlaying = allCards().some(c =>
-      c.img instanceof HTMLVideoElement && c.img._previewPlaying && !c.img.paused);
-    if (!anyPlaying) { previewPlayRaf = null; return; }
-    if (ts - previewPlayLastTs >= 40) {   // ~25 кадров/с — превью, не нужно 60
+    const cards = allCards();
+    const playing = cards.map((c, i) => (c.img instanceof HTMLVideoElement && c.img._previewPlaying && !c.img.paused) ? i : -1)
+      .filter(i => i >= 0);
+    if (!playing.length) { previewPlayRaf = null; renderAll(); return; }
+    if (ts - previewPlayLastTs >= 40) {
       previewPlayLastTs = ts;
-      renderAll();
+      if (playing.includes(state.current)) renderStage();
+      for (const i of playing) {
+        const canvas = el.slidesList.querySelector(`.slide-item[data-index="${i}"] canvas`);
+        if (canvas) paintCard(canvas, cards[i], i, canvas.clientWidth || 160);
+      }
     }
     previewPlayRaf = requestAnimationFrame(tick);
   };
@@ -1670,35 +1366,52 @@ function toggleVideoPreviewPlayback(index) {
   const card = allCards()[index];
   if (!card || !(card.img instanceof HTMLVideoElement)) return;
   const video = card.img;
-  const frame = el.previews.querySelector(`.frame[data-index="${index}"]`);
-  const btn = frame && frame.querySelector('.play-video');
   if (video.paused) {
     const start = video.trimStart || 0;
     const end = video.trimEnd ?? video.duration;
     if (video.currentTime < start || video.currentTime >= end) video.currentTime = start;
     video._previewPlaying = true;
     video.play().then(() => {
-      if (btn) btn.textContent = '⏸';
+      overlaySignature = '';
+      renderStage();
       ensurePreviewPlayLoop();
-    }).catch(() => say('Не получилось запустить предпросмотр видео'));
+    }).catch(() => say('Не получилось запустить видео'));
   } else {
     video._previewPlaying = false;
     video.pause();
-    if (btn) btn.textContent = '▶';
+    overlaySignature = '';
+    renderStage();
   }
 }
 
-/* Останавливает все проигрываемые превью — перед экспортом, чтобы петля
-   предпросмотра не соревновалась со слушателем timeupdate в exportVideoCard. */
+/* Останавливает все проигрываемые видео — перед экспортом и при уходе из проекта. */
 function stopAllVideoPreviews() {
-  allCards().forEach((card, i) => {
+  allCards().forEach(card => {
     if (!(card.img instanceof HTMLVideoElement)) return;
     card.img._previewPlaying = false;
     card.img.pause();
-    const frame = el.previews.querySelector(`.frame[data-index="${i}"]`);
-    const btn = frame && frame.querySelector('.play-video');
-    if (btn) btn.textContent = '▶';
   });
+  overlaySignature = '';
+}
+
+function openTrimFor(index) {
+  const card = allCards()[index];
+  if (!card || !(card.img instanceof HTMLVideoElement)) return;
+  askVideoTrim([{ card, index }], {
+    title: 'Обрезка видео',
+    hint: 'Укажи начало и конец нужного фрагмента — остальное обрежется при экспорте.',
+    confirmLabel: 'Готово',
+  }).then(() => { renderSlideForm(); renderAll(); });
+}
+
+function renderFull(card, scale = state.exportScale) {
+  const [W, H] = FORMATS[state.format];
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W * scale); canvas.height = Math.round(H * scale);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  renderCard(ctx, card, [W, H], currentAssets(), currentGradient());
+  return canvas;
 }
 
 /* -------------------------------------------------------------- экспорт */
@@ -1836,7 +1549,7 @@ function seekTo(video, t) {
 }
 
 /*
- * Сколько видео-карточек пишутся одновременно при экспорте (см. exportAll).
+ * Сколько видео-карточек пишутся одновременно при экспорте (см. exportSlides).
  * Запись видео идёт в реальном времени (см. exportVideoCard) — параллельная
  * запись нескольких карточек не ускоряет запись КАЖДОЙ из них, зато
  * несколько независимых карточек пишутся одновременно вместо по очереди, и
@@ -1876,6 +1589,10 @@ const VIDEO_EXPORT_CANDIDATES_WITH_AUDIO = [
   { mime: 'video/webm;codecs=vp8,opus', ext: 'webm' },
   { mime: 'video/webm', ext: 'webm' },
 ];
+
+// сколько запись должна идти после события start, прежде чем её можно
+// остановить без потери кадров (см. exportVideoCard)
+const STOP_GRACE_MS = 300;
 
 /*
  * Пишет обрезанный фрагмент видео карточки: тот же renderCard(), что рисует
@@ -1957,13 +1674,36 @@ async function exportVideoCard(card, index, onProgress) {
     const chunks = [];
     recorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
 
+    /*
+     * Кодировщик (особенно MP4) поднимается не мгновенно: событие start
+     * приходит через 0,3–1 с после первого кадра на холсте. Проверено в
+     * Chromium: кадры, нарисованные за это время, не теряются, отсчёт ролика
+     * идёт от первого кадра — поэтому видео запускается сразу, без ожидания.
+     * Но если вызвать recorder.stop() раньше, чем пришёл start, файл
+     * получается пустым (0 байт), а если сразу после start — из него
+     * пропадают кадры, ещё не дошедшие до кодировщика (остаётся один). Так и
+     * терялись короткие ролики. Поэтому, если ролик доиграл раньше,
+     * остановка откладывается до STOP_GRACE_MS после onstart, а до тех пор
+     * на холст продолжает подаваться последний кадр. Рисовать первый кадр
+     * заранее, до start(), нельзя: отсчёт пошёл бы от него, и всё ожидание
+     * кодировщика попало бы в начало файла застывшей картинкой.
+     */
     const blob = await new Promise((resolve, reject) => {
       let raf = null;
+      let startedAt = null;   // когда пришло событие start — кодировщик реально пишет
+      let ended = false;      // ролик доиграл до конца обрезки, новых кадров видео не будет
+      let stopped = false;
       const hardStopAt = performance.now() + 5 * 60 * 1000;   // защита от зависания на странных файлах
       const stop = () => {
+        if (!ended) {
+          ended = true;
+          video.removeEventListener('timeupdate', onTick);
+          video.pause();
+        }
+        const ready = startedAt !== null && performance.now() - startedAt >= STOP_GRACE_MS;
+        if (!ready && performance.now() < hardStopAt) return;   // цикл draw позовёт ещё раз
+        stopped = true;
         cancelAnimationFrame(raf);
-        video.removeEventListener('timeupdate', onTick);
-        video.pause();
         if (recorder.state !== 'inactive') recorder.stop();
       };
       const onTick = () => {
@@ -1972,9 +1712,10 @@ async function exportVideoCard(card, index, onProgress) {
       };
       const draw = () => {
         try { renderCard(ctx, card, [W, H], assets, gradient); } catch { /* попробуем на следующем кадре */ }
-        if (video.currentTime >= end || video.ended || performance.now() > hardStopAt) { stop(); return; }
-        raf = requestAnimationFrame(draw);
+        if (ended || video.currentTime >= end || video.ended || performance.now() > hardStopAt) stop();
+        if (!stopped) raf = requestAnimationFrame(draw);
       };
+      recorder.onstart = () => { startedAt = performance.now(); };
       recorder.onstop = () => {
         video.muted = wasMuted;
         if (onProgress) onProgress(1);
@@ -1982,7 +1723,7 @@ async function exportVideoCard(card, index, onProgress) {
       };
       recorder.onerror = e => { video.muted = wasMuted; reject(e.error || new Error('ошибка записи видео')); };
       video.addEventListener('timeupdate', onTick);
-      recorder.start();
+      recorder.start(1000);
       video.play().then(() => { raf = requestAnimationFrame(draw); }).catch(reject);
     });
     return { blob, ext: picked.ext };
@@ -1998,7 +1739,7 @@ function formatSeconds(s) {
 
 /*
  * Окно обрезки видео — общее и для «спросить сразу при загрузке» (см.
- * setPhoto), и для кнопки «✂» на превью (переоткрыть в любой момент), и для
+ * setPhoto), и для кнопки «Обрезать» (переоткрыть в любой момент), и для
  * пачки видео разом (сейчас нигде не используется как обязательный шаг перед
  * экспортом — экспорт просто берёт то, что уже лежит в video.trimStart/
  * trimEnd). Значения меняются «вживую»: перетаскивание ползунков и правка
@@ -2057,11 +1798,10 @@ function askVideoTrim(videoCards, opts = {}) {
       row.appendChild(scrubber);
 
       const fields = document.createElement('div');
-      fields.className = 'control-row vt-fields';
+      fields.className = 'vt-fields';
       const makeField = (title2, value) => {
         const wrap = document.createElement('label');
-        wrap.className = 'control';
-        wrap.title = title2;
+        wrap.append(document.createTextNode(title2));
         const input = document.createElement('input');
         input.type = 'number';
         input.min = '0';
@@ -2077,7 +1817,7 @@ function askVideoTrim(videoCards, opts = {}) {
 
       const previewBtn = document.createElement('button');
       previewBtn.type = 'button';
-      previewBtn.className = 'btn-ghost vt-preview-btn';
+      previewBtn.className = 'btn btn-outline btn-sm vt-preview-btn';
       previewBtn.textContent = '▶ Просмотр';
       fields.appendChild(previewBtn);
       row.appendChild(fields);
@@ -2177,48 +1917,51 @@ function askVideoTrim(videoCards, opts = {}) {
   });
 }
 
-/*
- * Обрезка видео к этому моменту уже выбрана заранее (спрашивается сразу
- * при загрузке — см. setPhoto, и её можно поменять кнопкой «✂» на превью
- * в любой момент), поэтому сам экспорт больше не прерывается модалкой —
- * просто использует то, что лежит в video.trimStart/trimEnd на каждой
- * карточке. Фото готовятся мгновенно и все сразу (Promise.all — тут нечего
- * ограничивать, канвас-рендер быстрый). Видео пишутся в реальном времени
- * (см. exportVideoCard) — единственный способ ускорить именно ИХ суммарно
- * это писать по VIDEO_EXPORT_CONCURRENCY штук одновременно вместо по
- * очереди: пока обычный for-await ждал бы карточку за карточкой (сумма всех
- * длительностей), пул воркеров ниже держит несколько записей в работе разом,
- * и общее время стремится к самой длинной карточке в самой нагруженной
- * группе, а не к сумме всех. Полоска прогресса — общая доля готовности по
- * всем карточкам разом (progress[i] на каждую, см. updateTotal).
- */
-async function exportAll() {
-  const list = allCards().filter(hasContent);
-  if (!list.length) { say('Пока нечего экспортировать'); return; }
 
-  stopAllVideoPreviews();   // иначе петля предпросмотра будет мешать записи
+/*
+ * Экспорт слайдов: mode 'zip' — одним архивом, 'files' — файлами по одному;
+ * onlyIndex — только один слайд (всегда отдельным файлом). Фото-слайды
+ * готовятся все сразу (Promise.all — рендер на канвасе быстрый). Видео
+ * пишутся в реальном времени (см. exportVideoCard), поэтому единственный
+ * способ ускорить их суммарно — писать по VIDEO_EXPORT_CONCURRENCY штук
+ * одновременно: общее время стремится к самому длинному ролику в группе,
+ * а не к сумме всех. Полоска прогресса — доля готовности по всем слайдам
+ * (progress[i] на каждый), видео заполняет свою долю постепенно.
+ * Пустые слайды (без текста и фото) пропускаются. Номер в имени файла —
+ * позиция слайда в карусели, а не в списке экспорта.
+ */
+async function exportSlides(mode, onlyIndex = null) {
+  const cards = allCards();
+  const entries = (onlyIndex === null ? cards.map((card, index) => ({ card, index }))
+                                      : [{ card: cards[onlyIndex], index: onlyIndex }])
+    .filter(e => e.card && hasContent(e.card));
+  if (!entries.length) { say('Пока нечего экспортировать'); return; }
+  if (onlyIndex === null) { state.exportMode = mode; saveProject(); }
+
+  stopAllVideoPreviews();   // иначе петля предпросмотра мешала бы записи
+  renderStage();
 
   const mime = state.exportFormat === 'jpeg' ? 'image/jpeg' : 'image/png';
   const photoExt = state.exportFormat === 'jpeg' ? 'jpg' : 'png';
-  const slots = new Array(list.length).fill(null);
-  const progress = new Array(list.length).fill(0);
+  const slots = new Array(entries.length).fill(null);
+  const progress = new Array(entries.length).fill(0);
   let failed = 0;
   showExportProgress();
 
   const updateTotal = () => {
-    updateExportProgress(progress.reduce((a, b) => a + b, 0) / list.length);
+    updateExportProgress(progress.reduce((a, b) => a + b, 0) / entries.length);
   };
-  const nameFor = (i, card, ext) =>
-    (i === 0 && card.kind === 'cover' ? '00-oblozhka' : String(i).padStart(2, '0') + '-kartochka') + '.' + ext;
+  const nameFor = (index, ext) =>
+    (index === 0 ? '00-oblozhka' : String(index).padStart(2, '0') + '-kartochka') + '.' + ext;
 
-  const photoJobs = list.map((card, i) => {
-    if (card.img instanceof HTMLVideoElement) return null;
+  const photoJobs = entries.map(({ card, index }, i) => {
+    if (card.img instanceof HTMLVideoElement && hasPhoto(card)) return null;
     return (async () => {
       try {
         const blob = await canvasToBlob(renderFull(card), mime, 0.95);
-        slots[i] = { name: nameFor(i, card, photoExt), blob };
+        slots[i] = { name: nameFor(index, photoExt), blob };
       } catch (err) {
-        console.error('не удалось подготовить карточку для экспорта', i, err);
+        console.error('не удалось подготовить слайд для экспорта', index, err);
         failed++;
       }
       progress[i] = 1;
@@ -2226,34 +1969,31 @@ async function exportAll() {
     })();
   }).filter(Boolean);
 
-  const videoIndices = list
-    .map((card, i) => (card.img instanceof HTMLVideoElement ? i : -1))
+  const videoJobs = entries
+    .map((e, i) => ((e.card.img instanceof HTMLVideoElement && hasPhoto(e.card)) ? i : -1))
     .filter(i => i >= 0);
-  if (videoIndices.length) {
-    say(videoIndices.length === 1
+  if (videoJobs.length) {
+    say(videoJobs.length === 1
       ? 'Записываю видео…'
-      : `Записываю видео (${videoIndices.length} шт., до ${Math.min(VIDEO_EXPORT_CONCURRENCY, videoIndices.length)} одновременно)…`);
+      : `Записываю видео (${videoJobs.length} шт., до ${Math.min(VIDEO_EXPORT_CONCURRENCY, videoJobs.length)} одновременно)…`);
   }
   let cursor = 0;
   const videoWorker = async () => {
-    while (cursor < videoIndices.length) {
-      const i = videoIndices[cursor++];
-      const card = list[i];
+    while (cursor < videoJobs.length) {
+      const i = videoJobs[cursor++];
+      const { card, index } = entries[i];
       try {
-        const result = await exportVideoCard(card, i, p => { progress[i] = p; updateTotal(); });
-        slots[i] = { name: nameFor(i, card, result.ext), blob: result.blob };
+        const result = await exportVideoCard(card, index, p => { progress[i] = p; updateTotal(); });
+        slots[i] = { name: nameFor(index, result.ext), blob: result.blob };
       } catch (err) {
-        console.error('не удалось подготовить карточку для экспорта', i, err);
+        console.error('не удалось подготовить слайд для экспорта', index, err);
         failed++;
       }
       progress[i] = 1;
       updateTotal();
     }
   };
-  const videoWorkers = Array.from(
-    { length: Math.min(VIDEO_EXPORT_CONCURRENCY, videoIndices.length) },
-    videoWorker
-  );
+  const videoWorkers = Array.from({ length: Math.min(VIDEO_EXPORT_CONCURRENCY, videoJobs.length) }, videoWorker);
 
   await Promise.all([...photoJobs, ...videoWorkers]);
   hideExportProgress();
@@ -2261,17 +2001,42 @@ async function exportAll() {
   const rendered = slots.filter(Boolean);
   if (!rendered.length) { say('Не удалось подготовить файлы'); return; }
 
-  if (state.exportZip) {
+  if (mode === 'zip' && rendered.length > 1) {
     const files = await Promise.all(rendered.map(async r =>
       ({ name: r.name, data: new Uint8Array(await r.blob.arrayBuffer()) })));
-    downloadBlob(new Blob([buildZip(files)], { type: 'application/zip' }), 'card-maker-export.zip');
+    const base = fileSlug(state.draftName || autoDraftName(projectData()), 'card-maker');
+    downloadBlob(new Blob([buildZip(files)], { type: 'application/zip' }), base + '.zip');
   } else {
     for (const r of rendered) {
       downloadBlob(r.blob, r.name);
       await new Promise(res => setTimeout(res, 350));
     }
   }
+  closeExportPop();
   say(failed ? `Скачано: ${rendered.length}, не получилось: ${failed}` : 'Скачано: ' + rendered.length);
+}
+
+/* ------------------------------------------------- окошко «Экспорт» */
+
+function openExportPop() {
+  syncExportPop();
+  el.exportPop.hidden = false;
+}
+
+function closeExportPop() {
+  el.exportPop.hidden = true;
+}
+
+function syncExportPop() {
+  document.querySelectorAll('#segExportFormat button').forEach(b =>
+    b.classList.toggle('on', b.dataset.value === state.exportFormat));
+  document.querySelectorAll('#segExportScale button').forEach(b =>
+    b.classList.toggle('on', Number(b.dataset.value) === state.exportScale));
+  const [W, H] = FORMATS[state.format];
+  const s = state.exportScale;
+  const videos = allCards().filter(c => hasPhoto(c) && c.img instanceof HTMLVideoElement).length;
+  document.getElementById('exportNote').textContent = `${W * s}×${H * s} px` +
+    (videos ? ` · видео (${videos}) — в MP4 или WEBM` : '');
 }
 
 async function copyCurrent() {
@@ -2284,269 +2049,6 @@ async function copyCurrent() {
   } catch {
     say('Браузер не дал доступ к буферу — используй экспорт');
   }
-}
-
-async function pasteFromClipboard() {
-  try {
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      // видео в буфере обмена браузеры пока почти не кладут, но если
-      // когда-нибудь начнут — сработает тем же путём, что и фото
-      const type = item.types.find(t => t.startsWith('image/') || t.startsWith('video/'));
-      if (type) { await setPhoto(state.current, await item.getType(type)); return; }
-    }
-    const text = await navigator.clipboard.readText();
-    if (text) { insertText(text); return; }
-    say('В буфере пусто');
-  } catch {
-    say('Нажми ⌘V на клавиатуре — так браузер разрешает вставку');
-  }
-}
-
-/* Вставляет разметку в место курсора, не полагаясь на команды браузера. */
-function insertMarkup(markup) {
-  pushUndo();
-  const range = getCaretOffset(el.cardsText) || state.lastCaret || { start: 0, end: 0 };
-  const chars = markupToChars(state.cardsText);
-  const added = markupToChars(markup);
-  chars.splice(range.start, range.end - range.start, ...added);
-  state.cardsText = charsToMarkup(chars);
-  setEditorValue(state.cardsText, false);
-  const caret = range.start + added.length;
-  setCaretOffset(el.cardsText, caret, caret);
-  state.lastCaret = { start: caret, end: caret };
-  onEditorInput();
-}
-
-function insertText(text) {
-  insertMarkup(clipboardPlainToMarkup(text));
-  say('Текст вставлен');
-}
-
-function onEditorInput() {
-  pushUndo();   // снимок хватает СТАРЫЙ state.cardsText — пишем его до переприсвоения ниже
-  state.cardsText = editorValue();
-  syncCards(); buildPreviews(); saveProject();
-  syncTypographyControls();
-  revealActiveCard();
-}
-
-/* ------------------------------------------- к какой карточке применять настройки */
-
-/*
- * Считает, какие карточки задевает выделение в поле ввода.
- * Возвращает индексы в state.cards; если поле не в фокусе — карточку,
- * выделенную в превью.
- */
-function selectedCardIndexes() {
-  if (state.focusZone === 'coverTitle') return { cover: 'title' };
-  if (state.focusZone === 'coverBody') return { cover: 'body' };
-  if (state.focusZone === 'preview') {
-    return state.current > 0 ? [state.current - 1] : { cover: 'title' };
-  }
-
-  // фокус мог уйти на список или ползунок — берём последнее положение курсора
-  const inEditor = el.cardsText.contains(document.activeElement) ||
-                   document.activeElement === el.cardsText;
-  const range = (inEditor ? editorSelection() : null) || state.lastCaret;
-  if (!range) return state.current > 0 ? [state.current - 1] : { cover: 'title' };
-
-  // считаем по тому же тексту, по которому вычислены смещения курсора
-  const text = editorText(el.cardsText);
-  const from = range.start, to = range.end;
-
-  const touched = [];
-  let cardIndex = -1;
-  let offset = 0;
-  for (const line of text.split('\n')) {
-    const lineStart = offset;
-    const lineEnd = offset + line.length;
-    if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) cardIndex++;
-    // текст до первой метки //  parseCards() отбрасывает при сборке карточек,
-    // поэтому курсор в нём не должен считаться попаданием в «карточку 1»
-    // строка попадает в выделение (или в неё стоит каретка)
-    const inside = from <= lineEnd && to >= lineStart;
-    if (inside && cardIndex >= 0 && !touched.includes(cardIndex)) touched.push(cardIndex);
-    offset = lineEnd + 1;
-  }
-  return touched;
-}
-
-/*
- * Пока пишешь текст пятой карточки, её превью само подкручивается в вид,
- * чтобы не искать его глазами и не листать вручную.
- */
-function revealActiveCard() {
-  if (state.focusZone !== 'editor') return;
-  const idx = selectedCardIndexes();
-  if (!Array.isArray(idx) || !idx.length) return;
-
-  const target = idx[0] + 1;                  // 0 — обложка
-  if (target === state.current) return;
-
-  selectCard(target, { keepZone: true });
-
-  const frame = el.previews.querySelector('.frame[data-index="' + target + '"]');
-  if (!frame) return;
-  const item = frame.closest('.preview-item') || frame;
-  if (item.scrollIntoView) {
-    item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }
-}
-
-/* Есть ли выделенный кусок текста в поле карточек. */
-function hasEditorSelection() {
-  const range = getCaretOffset(el.cardsText) || state.lastCaret;
-  return Boolean(range && range.end > range.start);
-}
-
-/* Запоминает, что пользователь работает в поле карточек, и где там курсор. */
-function rememberEditorFocus() {
-  const inEditor = el.cardsText.contains(document.activeElement) ||
-                   document.activeElement === el.cardsText;
-  if (!inEditor) return false;
-  const range = editorSelection();
-  if (range) state.lastCaret = range;
-  state.focusZone = 'editor';
-  return true;
-}
-
-/* Стиль, который сейчас показывают контролы: активной карточки или обложки. */
-function activeStyleTarget() {
-  const idx = selectedCardIndexes();
-  if (idx && idx.cover) return { kind: 'cover', field: idx.cover };
-  if (!idx || !idx.length) return { kind: 'cover', field: 'title' };
-  return { kind: 'card', indexes: idx };
-}
-
-function effectiveStyle(cardIndex) {
-  const card = state.cards[cardIndex];
-  if (!card) return null;
-  return Object.assign(defaultTypography(card), card.style || {});
-}
-
-/* Показывает в панели типографики настройки активной карточки. */
-function syncTypographyControls() {
-  const target = activeStyleTarget();
-  let style;
-  if (target.kind === 'cover') {
-    const base = defaultTypography(state.cover);
-    base.weight = target.field === 'title' ? 'Bold' : 'Medium';
-    base.size = target.field === 'title' ? state.coverTitleSize : state.coverBodySize;
-    style = Object.assign(base, state.coverStyles[target.field]);
-  } else {
-    style = effectiveStyle(target.indexes[0]);
-  }
-  if (!style) return;
-  el.fontWeight.value = style.weight;
-  setSelectValue(el.fontSize, style.size);
-  el.lineHeight.value = String(style.lineHeight);
-  el.letterSpacing.value = String(style.letterSpacing);
-  el.alignGroup.querySelectorAll('button').forEach(b => {
-    b.classList.toggle('active', b.dataset.align === style.align);
-  });
-  el.typoScope.textContent = target.kind === 'cover'
-    ? (target.field === 'title' ? 'заголовок обложки' : 'подзаголовок обложки')
-    : (target.indexes.length > 1
-        ? 'карточки ' + target.indexes.map(i => i + 1).join(', ')
-        : 'карточка ' + (target.indexes[0] + 1));
-}
-
-/* Ставит значение в список, добавляя пункт, если такого кегля в нём нет. */
-function setSelectValue(select, value) {
-  const text = String(value);
-  if (![...select.options].some(o => o.value === text)) {
-    const option = document.createElement('option');
-    option.value = text;
-    option.textContent = text;
-    select.appendChild(option);
-  }
-  select.value = text;
-}
-
-/* Записывает изменённую настройку туда, где стоит выделение. */
-function applyStylePatch(patch) {
-  pushUndo();
-  const target = activeStyleTarget();
-  if (target.kind === 'cover') {
-    Object.assign(state.coverStyles[target.field], patch);
-    // кегль обложки живёт в степперах, держим их в согласии
-    if (patch.size) {
-      if (target.field === 'title') {
-        state.coverTitleSize = patch.size;
-        el.coverTitleSize.textContent = String(patch.size);
-      } else {
-        state.coverBodySize = patch.size;
-        el.coverBodySize.textContent = String(patch.size);
-      }
-    }
-    syncTemplateDesign();
-  } else {
-    for (const i of target.indexes) {
-      const key = state.cardIds[i];
-      if (!key) continue;
-      state.cardStylesById[key] = Object.assign({}, state.cardStylesById[key] || {}, patch);
-    }
-  }
-  syncCards(); scheduleRender(); saveProject();
-}
-
-/* --------------------------------------------------- форматирование текста */
-
-/*
- * Оборачивает выделенный текст в разметку, а если он уже обёрнут — снимает её
- * и возвращает как было. Работает так же, как ⌘B / ⌘I в текстовом редакторе.
- */
-/*
- * Меняет оформление выделенного текста.
- * Работает по посимвольной модели, поэтому результат одинаков во всех
- * браузерах и не зависит от команд редактирования.
- *
- * patch: { bold: 'toggle' } | { italic: 'toggle' } | { size: 48 } | { size: null }
- */
-function restyleSelection(patch) {
-  el.cardsText.focus();
-  let range = getCaretOffset(el.cardsText) || state.lastCaret;
-  if (!range) return false;
-
-  const chars = markupToChars(state.cardsText);
-  let { start, end } = range;
-
-  // без выделения берём слово под курсором
-  if (start === end) {
-    while (start > 0 && chars[start - 1] && /\S/.test(chars[start - 1].ch)) start--;
-    while (end < chars.length && chars[end] && /\S/.test(chars[end].ch)) end++;
-    if (start === end) return false;
-  }
-
-  const picked = chars.slice(start, end).filter(c => c.ch !== '\n');
-  if (!picked.length) return false;
-  pushUndo();
-
-  if (patch.bold === 'toggle') {
-    const value = !picked.every(c => c.bold);
-    for (let i = start; i < end; i++) if (chars[i]) chars[i].bold = value;
-  }
-  if (patch.italic === 'toggle') {
-    const value = !picked.every(c => c.italic);
-    for (let i = start; i < end; i++) if (chars[i]) chars[i].italic = value;
-  }
-  if ('size' in patch) {
-    for (let i = start; i < end; i++) if (chars[i]) chars[i].size = patch.size;
-  }
-
-  state.cardsText = charsToMarkup(chars);
-  setEditorValue(state.cardsText, false);
-  setCaretOffset(el.cardsText, start, end);
-  state.lastCaret = { start, end };
-  state.focusZone = 'editor';
-  syncCards(); buildPreviews(); saveProject();
-  syncTypographyControls();
-  return true;
-}
-
-function toggleMarkup(mark) {
-  restyleSelection(mark === '**' ? { bold: 'toggle' } : { italic: 'toggle' });
 }
 
 /* ------------------------------------------------- отправка в Telegram */
@@ -2587,343 +2089,1129 @@ async function sendToTelegram() {
   }
 
   // окна «Поделиться» нет — скачиваем и открываем Telegram
-  await exportAll();
+  await exportSlides('files');
   window.open('https://web.telegram.org/', '_blank', 'noopener');
   say('Браузер не умеет отправлять файлы напрямую — карточки скачаны, Telegram открыт');
 }
 
+/* ------------------------------------------------------ правка текста */
+/*
+ * Полей с разметкой два: «Весь текст» (всё state.cardsText) и текст текущей
+ * карточки на вкладке «Слайд» (#cardEditor — только её блок, без метки).
+ * binding описывает, откуда поле берёт разметку и куда её возвращает, —
+ * вставка из буфера, ⌘B/⌘I и кегль выделения работают одинаково в обоих.
+ * Пока в поле печатают, его содержимое не перерисовывается из state (иначе
+ * прыгал бы курсор) — только превью; при переключении слайда или вкладки
+ * поле собирается заново из разметки.
+ */
+function wholeBinding() {
+  return { kind: 'whole', el: el.cardsText, get: () => state.cardsText, set: m => { state.cardsText = m; } };
+}
+
+function cardBinding() {
+  const node = document.getElementById('cardEditor');
+  const cardIndex = state.current - 1;
+  if (!node || cardIndex < 0) return null;
+  return { kind: 'card', el: node, get: () => cardBody(cardIndex), set: m => setCardBody(cardIndex, m) };
+}
+
+/* Поле, в котором находится узел (курсор, событие вставки), или null. */
+function bindingFor(node) {
+  if (!node) return null;
+  if (el.cardsText.contains(node)) return wholeBinding();
+  const card = document.getElementById('cardEditor');
+  if (card && card.contains(node)) return cardBinding();
+  return null;
+}
+
+// последнее выделение в поле — нужно, когда фокус ушёл на кнопку или список кеглей
+let lastCaret = null;   // { kind, start, end }
+let lastBindingKind = null;
+
+function rememberCaret() {
+  const sel = window.getSelection();
+  const node = sel && sel.rangeCount ? sel.getRangeAt(0).startContainer : null;
+  const binding = bindingFor(node);
+  if (!binding) return null;
+  const range = getCaretOffset(binding.el);
+  if (range) lastCaret = { kind: binding.kind, start: range.start, end: range.end };
+  lastBindingKind = binding.kind;
+  return binding;
+}
+
+function activeBinding() {
+  const focused = bindingFor(document.activeElement);
+  if (focused) return focused;
+  if (lastBindingKind === 'whole' && state.tab === 'text') return wholeBinding();
+  if (lastBindingKind === 'card' && state.tab === 'slide') return cardBinding();
+  return null;
+}
+
+function caretFor(binding) {
+  return getCaretOffset(binding.el) ||
+    (lastCaret && lastCaret.kind === binding.kind ? { start: lastCaret.start, end: lastCaret.end } : null);
+}
+
+/* Текст поменялся в одном из полей: карточки, превью, черновик — но не само поле. */
+function afterTextEdit() {
+  syncCards();
+  renderSlidesList();
+  scheduleRender();
+  saveProject();
+  syncDocName();
+}
+
+function onEditorInput(binding) {
+  pushUndo();   // снимок берёт СТАРЫЙ текст — до записи ниже
+  binding.set(htmlToMarkup(binding.el));
+  afterTextEdit();
+  if (binding.kind === 'whole') followCaretCard();
+}
+
+/* Вставляет разметку в место курсора, не полагаясь на команды браузера. */
+function insertMarkup(binding, markup) {
+  pushUndo();
+  const range = caretFor(binding) || { start: 0, end: 0 };
+  const chars = markupToChars(binding.get());
+  const added = markupToChars(markup);
+  chars.splice(range.start, range.end - range.start, ...added);
+  binding.set(charsToMarkup(chars));
+  binding.el.innerHTML = markupToHtml(binding.get());
+  const caret = range.start + added.length;
+  setCaretOffset(binding.el, caret, caret);
+  lastCaret = { kind: binding.kind, start: caret, end: caret };
+  afterTextEdit();
+}
+
+/*
+ * Меняет оформление выделенного текста (без выделения — слова под
+ * курсором). Работает по посимвольной модели, поэтому результат одинаков
+ * во всех браузерах и не зависит от команд редактирования.
+ * patch: { bold: 'toggle' } | { italic: 'toggle' } | { size: 48 } | { size: null }
+ */
+function restyleSelection(binding, patch) {
+  if (!binding) { say('Поставь курсор в текст'); return false; }
+  const range = caretFor(binding);
+  if (!range) { say('Выдели текст, который нужно оформить'); return false; }
+
+  const chars = markupToChars(binding.get());
+  let { start, end } = range;
+  if (start === end) {
+    while (start > 0 && chars[start - 1] && /\S/.test(chars[start - 1].ch)) start--;
+    while (end < chars.length && chars[end] && /\S/.test(chars[end].ch)) end++;
+    if (start === end) return false;
+  }
+  const picked = chars.slice(start, end).filter(c => c.ch !== '\n');
+  if (!picked.length) return false;
+  pushUndo();
+
+  if (patch.bold === 'toggle') {
+    const value = !picked.every(c => c.bold);
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].bold = value;
+  }
+  if (patch.italic === 'toggle') {
+    const value = !picked.every(c => c.italic);
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].italic = value;
+  }
+  if ('size' in patch) {
+    for (let i = start; i < end; i++) if (chars[i]) chars[i].size = patch.size;
+  }
+
+  binding.set(charsToMarkup(chars));
+  binding.el.innerHTML = markupToHtml(binding.get());
+  binding.el.focus();
+  setCaretOffset(binding.el, start, end);
+  lastCaret = { kind: binding.kind, start, end };
+  afterTextEdit();
+  return true;
+}
+
+function toggleMarkup(mark) {
+  restyleSelection(activeBinding(), mark === '**' ? { bold: 'toggle' } : { italic: 'toggle' });
+}
+
+/* Панель над полем: Ж, К и кегль выделенного. */
+function wireTextToolbar(toolbar, getBinding) {
+  // mousedown не отдаёт фокус кнопке — выделение в поле остаётся живым
+  toolbar.querySelectorAll('button[data-cmd]').forEach(b =>
+    b.addEventListener('mousedown', e => e.preventDefault()));
+  toolbar.querySelector('[data-cmd="bold"]').addEventListener('click', () =>
+    restyleSelection(getBinding(), { bold: 'toggle' }));
+  toolbar.querySelector('[data-cmd="italic"]').addEventListener('click', () =>
+    restyleSelection(getBinding(), { italic: 'toggle' }));
+  const size = toolbar.querySelector('[data-cmd="size"]');
+  fillSizePick(size);
+  size.addEventListener('change', () => {
+    const value = size.value;
+    size.value = '';
+    if (!value) return;
+    restyleSelection(getBinding(), { size: value === 'reset' ? null : Number(value) });
+  });
+}
+
+function fillSizePick(select) {
+  select.innerHTML = '';
+  select.append(h('option', { value: '', text: 'Кегль выделения' }),
+    h('option', { value: 'reset', text: 'Как у карточки' }),
+    ...SELECTION_SIZES.map(s => h('option', { value: String(s), text: String(s) })));
+}
+
+/*
+ * Пока пишешь в «Весь текст», выбранным становится слайд, в котором стоит
+ * курсор, — его превью сразу на сцене. Номер карточки считается по тем же
+ * блокам, что и splitBlocks(): строка-метка начинает новую карточку, текст
+ * до первой метки — отдельная карточка без метки.
+ */
+function followCaretCard() {
+  const range = getCaretOffset(el.cardsText);
+  if (!range) return;
+  const text = editorText(el.cardsText);
+  let offset = 0;
+  let index = -1;
+  for (const line of text.split('\n')) {
+    const isMarker = MARKER_RE.test(line.trim());
+    if (isMarker || (index === -1 && line.trim())) index++;
+    if (range.start <= offset + line.length) break;
+    offset += line.length + 1;
+  }
+  const slide = Math.max(0, index) + 1;
+  if (index >= 0 && slide !== state.current && slide <= state.cards.length) selectSlide(slide);
+}
+
+/* ----------------------------------------------- разбивка на карточки */
+
+/*
+ * Разбивает вставленный текст на карточки: пустая строка — граница абзаца,
+ * каждый абзац становится ровно одной карточкой — один в один, без попыток
+ * упаковать несколько абзацев в одну карточку или растащить длинный абзац
+ * на несколько.
+ *
+ * Исключение — заголовок: если накопленная карточка сейчас состоит ровно
+ * из одной строки и та не заканчивается точкой, это заголовок («Шоколад» —
+ * Джоан Харрис», «Зона мастер-классов»), а не законченный абзац. Пустая
+ * строка сразу после такого заголовка — просто отступ перед текстом, а не
+ * граница карточки, поэтому она пропускается, и следующий абзац
+ * приклеивается к заголовку в одну карточку. Если же заголовок с текстом
+ * уже были на соседних строках без пустой строки между ними — они и так
+ * в одном абзаце, это исключение просто не срабатывает.
+ *
+ * Длинный абзац может не поместиться на карточку целиком — тогда сработает
+ * индикатор переполнения (см. renderCard), и его можно будет разбить вручную.
+ * Существующие метки //N в тексте не сохраняются — функция предполагается
+ * для только что вставленного текста, а не для правки готовой раскладки.
+ */
+function autoSplitText() {
+  const isHeadingOnly = block => block.length === 1 && !block[0].trim().endsWith('.');
+
+  const paragraphs = [];
+  let current = [];
+  for (const line of state.cardsText.split('\n')) {
+    if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) continue;   // старые метки не переносим
+    if (!line.trim()) {
+      if (current.length && !isHeadingOnly(current)) { paragraphs.push(current); current = []; }
+      continue;
+    }
+    current.push(line);
+  }
+  if (current.length) paragraphs.push(current);
+  if (!paragraphs.length) { say('Сначала добавь текст, который нужно разбить'); return; }
+
+  if (!confirm('Текущая раскладка на карточки будет заменена — метки //N расставятся заново, по одному абзацу на карточку. Продолжить?')) return;
+  pushUndo();
+
+  state.cardsText = paragraphs
+    .map((lines, i) => '//' + (i + 1) + '\n' + lines.join('\n'))
+    .join('\n\n');
+  commitCardsText();
+  say('Разбито на карточек: ' + paragraphs.length);
+}
+
+/* ==================================================== стартовый экран */
+
+function templateGradient(name) {
+  return Object.assign({}, GRADIENT_DEFAULTS, (state.templates[name] || {}).gradient || {});
+}
+
+/* Обложка из сохранённых данных проекта — для миниатюры черновика. */
+function coverFromData(d) {
+  const styles = d.coverStyles || {};
+  return {
+    kind: 'cover', title: d.coverTitle || '', body: d.coverBody || '', img: null, usePhoto: true,
+    zoom: 1, panX: 0, panY: 0, rotate: 0, grayscale: false, brightness: 100, contrast: 100,
+    style: { size: d.coverBodySize || 45, headingSize: d.coverTitleSize || 60 },
+    titleStyle: Object.assign({}, styles.title), bodyStyle: Object.assign({}, styles.body),
+  };
+}
+
+/* Что показать на миниатюре черновика: обложку, а если она пустая — первую карточку. */
+function previewCardFromData(d) {
+  if ((d.coverTitle || '').trim() || (d.coverBody || '').trim()) return coverFromData(d);
+  const first = parseCards(d.cardsText || '')[0];
+  if (!first) return coverFromData(d);
+  return { kind: 'card', lines: first.lines, usePhoto: first.usePhoto, img: null,
+           zoom: 1, panX: 0, panY: 0, rotate: 0, grayscale: false, brightness: 100, contrast: 100, style: {} };
+}
+
+/* Рисует слайд, вписанный в рамку boxW×boxH (CSS-пиксели). */
+function paintPreview(canvas, card, format, boxW, boxH, templateName) {
+  const [W, H] = FORMATS[format] || FORMATS[DEFAULT_FORMAT];
+  const fit = Math.min(boxW / W, boxH / H);
+  const cssW = Math.round(W * fit), cssH = Math.round(H * fit);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  if (!state.fontsReady) return;
+  const ctx = canvas.getContext('2d');
+  const scale = canvas.width / W;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  const assets = state.assets[templateName] || currentAssets();
+  try { renderCard(ctx, card, [W, H], assets, templateGradient(templateName)); } catch { /* превью не критично */ }
+}
+
+function renderHome() {
+  const drafts = readDrafts();
+  el.draftsSection.hidden = !drafts.length;
+  el.draftsRow.innerHTML = '';
+  for (const d of drafts) {
+    const canvas = h('canvas');
+    const count = parseCards(d.data.cardsText || '').length + 1;
+    const format = FORMATS[d.data.format] ? d.data.format : DEFAULT_FORMAT;
+    const del = iconBtn('trash', 'Удалить черновик', e => {
+      e.stopPropagation();
+      if (confirm('Удалить черновик «' + draftDisplayName(d) + '»? Вернуть его будет нельзя.')) deleteDraft(d.id);
+    }, 'sm danger del');
+    const card = h('div', { class: 'draft', tabindex: '0', role: 'button', 'aria-label': 'Открыть ' + draftDisplayName(d),
+        onclick: () => openDraft(d.id),
+        onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDraft(d.id); } } },
+      h('div', { class: 'thumb' }, canvas),
+      h('div', { class: 'name', text: draftDisplayName(d) }),
+      h('div', { class: 'meta', text: `${count} ${pluralRu(count, 'слайд', 'слайда', 'слайдов')} · ${(FORMAT_INFO[format] || {}).short || format} · ${formatAgo(d.updatedAt)}` }),
+      del);
+    el.draftsRow.append(card);
+    paintPreview(canvas, previewCardFromData(d.data), format, 176, 150, d.data.templateName || state.templateName);
+  }
+
+  el.formatGrid.innerHTML = '';
+  for (const [format, info] of Object.entries(FORMAT_INFO)) {
+    const canvas = h('canvas');
+    const stack = h('div', { class: 'stack' }, h('div', { class: 'behind b2' }), h('div', { class: 'behind b1' }), canvas);
+    const tile = h('div', { class: 'format-tile' },
+      h('div', { class: 'well' }, stack),
+      h('div', { class: 't-name' }, info.name, h('span', { class: 'chip', text: format })),
+      h('p', { class: 't-desc', text: info.desc }),
+      h('div', { class: 't-actions' },
+        btn('btn btn-primary', null, 'Начать с примером', () => createDraft(format, true)),
+        btn('btn btn-outline', null, 'Пустой', () => createDraft(format, false))));
+    el.formatGrid.append(tile);
+    const sample = coverFromData({ coverTitle: SAMPLE_COVER.title, coverBody: SAMPLE_COVER.body,
+      coverTitleSize: (state.templates[state.templateName] || {}).coverTitleSize,
+      coverBodySize: (state.templates[state.templateName] || {}).coverBodySize });
+    paintPreview(canvas, sample, format, 190, 236, state.templateName);
+  }
+}
+
+function showHome() {
+  state.screen = 'home';
+  el.editor.hidden = true;
+  el.home.hidden = false;
+  closeExportPop();
+  renderHome();
+  window.scrollTo(0, 0);
+}
+
+/* «← Проекты»: фото и видео остаются в памяти вкладки (см. stashSessionMedia). */
+function goHome() {
+  stopAllVideoPreviews();
+  saveProject();
+  stashSessionMedia();
+  state.draftId = null;
+  showHome();
+}
+
+/* ============================================================ редактор */
+
+function showEditor() {
+  state.screen = 'editor';
+  el.home.hidden = true;
+  el.editor.hidden = false;
+  el.editor.classList.remove('focus');
+  document.getElementById('btnFocus').classList.remove('active');
+  syncCards();
+  state.current = clamp(state.current, 0, state.cards.length);
+  lastCaret = null;
+  lastBindingKind = null;
+  setTab('slide');
+  refreshEditor();
+  window.scrollTo(0, 0);
+}
+
+/* Перерисовать весь редактор после смены структуры, отмены, открытия черновика. */
+function refreshEditor() {
+  if (state.screen !== 'editor') return;
+  state.current = clamp(state.current, 0, state.cards.length);
+  renderSlidesList(true);
+  if (state.tab === 'slide') renderSlideForm();
+  else if (state.tab === 'text') {
+    if (document.activeElement !== el.cardsText) el.cardsText.innerHTML = state.cardsText ? markupToHtml(state.cardsText) : '';
+  } else renderProjectForm();
+  syncDocName();
+  syncDocHeader();
+  syncUndoButtons();
+  overlaySignature = '';
+  renderAll();
+}
+
+function syncDocName() {
+  if (state.screen !== 'editor') return;
+  if (document.activeElement !== el.docName) el.docName.value = state.draftName;
+  el.docName.placeholder = autoDraftName(projectData());
+}
+
+function syncDocHeader() {
+  const info = FORMAT_INFO[state.format];
+  el.docFormat.textContent = (info ? info.name + ' · ' : '') + state.format;
+}
+
+function setTab(name) {
+  state.tab = name;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  el.tabSlide.hidden = name !== 'slide';
+  el.tabText.hidden = name !== 'text';
+  el.tabProject.hidden = name !== 'project';
+  if (name === 'slide') renderSlideForm();
+  if (name === 'text') el.cardsText.innerHTML = state.cardsText ? markupToHtml(state.cardsText) : '';
+  if (name === 'project') renderProjectForm();
+}
+
+/* ----------------------------------------------------- список слайдов */
+
+function slideLabel(card, i) {
+  if (i === 0) return 'Обложка';
+  const first = (card.lines || []).find(l => l.trim());
+  return first ? plainText(first) : 'Пустая карточка';
+}
+
+let slidesSignature = '';
+function renderSlidesList(force = false) {
+  const list = allCards();
+  const sig = state.format + '|' + state.cardIds.join(',');
+  if (force || sig !== slidesSignature) {
+    slidesSignature = sig;
+    el.slidesList.innerHTML = '';
+    list.forEach((card, i) => el.slidesList.append(buildSlideItem(i, list.length)));
+    if (state.fontsReady && state.screen === 'editor') renderThumbs();
+  }
+  updateSlidesMeta();
+}
+
+function buildSlideItem(i, total) {
+  const cardIndex = i - 1;
+  const stop = fn => e => { e.stopPropagation(); fn(); };
+  const thumb = h('div', { class: 'thumb' }, h('canvas'),
+    h('span', { class: 'video-badge', icon: 'film-strip', hidden: true, title: 'Видео' }));
+  if (i > 0) {
+    thumb.append(h('div', { class: 'tools' },
+      iconBtn('arrow-up', 'Выше', stop(() => moveCard(cardIndex, cardIndex - 1)), i === 1 ? 'sm hidden-tool' : 'sm'),
+      iconBtn('arrow-down', 'Ниже', stop(() => moveCard(cardIndex, cardIndex + 1)), i === total - 1 ? 'sm hidden-tool' : 'sm'),
+      iconBtn('copy', 'Дублировать', stop(() => duplicateCard(cardIndex)), 'sm'),
+      iconBtn('trash', 'Удалить', stop(() => deleteCard(cardIndex)), 'sm danger')));
+    thumb.querySelectorAll('.hidden-tool').forEach(b => { b.disabled = true; });
+  }
+  const item = h('div', { class: 'slide-item', 'data-index': String(i), tabindex: '0', role: 'button',
+      onclick: () => selectSlide(i),
+      onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectSlide(i); } } },
+    thumb,
+    h('div', { class: 'cap' },
+      h('span', { class: 'num', text: String(i + 1) }),
+      h('span', { class: 'label' }),
+      h('span', { class: 'warn-dot', hidden: true, title: 'Текст не помещается' })));
+
+  // перетаскивание: карточку — на место другой карточки; файл — на любой слайд
+  if (i > 0) {
+    item.draggable = true;
+    item.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/x-card-index', String(cardIndex));
+      item.classList.add('dragging');
+    });
+    item.addEventListener('dragend', () => item.classList.remove('dragging'));
+  }
+  item.addEventListener('dragover', e => {
+    const types = [...e.dataTransfer.types];
+    if (types.includes('Files') || (i > 0 && types.includes('text/x-card-index'))) {
+      e.preventDefault();
+      item.classList.add('drag-over');
+    }
+  });
+  item.addEventListener('dragleave', () => item.classList.remove('drag-over'));
+  item.addEventListener('drop', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    item.classList.remove('drag-over');
+    const from = e.dataTransfer.getData('text/x-card-index');
+    if (from !== '' && i > 0) { moveCard(Number(from), cardIndex); return; }
+    await dropMedia([...(e.dataTransfer.files || [])], i);
+  });
+  return item;
+}
+
+function updateSlidesMeta() {
+  const list = allCards();
+  el.slidesList.querySelectorAll('.slide-item').forEach(item => {
+    const i = Number(item.dataset.index);
+    const card = list[i];
+    if (!card) return;
+    item.classList.toggle('on', i === state.current);
+    item.querySelector('.warn-dot').hidden = !state.overflow[i];
+    item.querySelector('.video-badge').hidden = !(hasPhoto(card) && card.img instanceof HTMLVideoElement);
+    const label = item.querySelector('.label');
+    label.textContent = slideLabel(card, i);
+    label.classList.toggle('muted', i > 0 && !(card.lines || []).some(l => l.trim()));
+  });
+}
+
+function selectSlide(index, { force = false } = {}) {
+  const next = clamp(index, 0, allCards().length - 1);
+  const changed = next !== state.current;
+  state.current = next;
+  updateSlidesMeta();
+  const item = el.slidesList.querySelector(`.slide-item[data-index="${next}"]`);
+  if (item && changed && item.scrollIntoView) item.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  if (state.tab === 'slide' && (changed || force)) renderSlideForm();
+  overlaySignature = '';
+  renderStage();
+  renderWarnings();
+}
+
+/* ------------------------------------------------------ медиа: файлы */
+
+let pendingMediaIndex = null;
+function pickMediaFor(index) {
+  pendingMediaIndex = index;
+  el.filePicker.value = '';
+  el.filePicker.click();
+}
+
+/* Файлы, брошенные на слайд: один — на этот слайд, несколько — по порядку дальше. */
+async function dropMedia(files, index) {
+  const media = files.filter(isMediaFile);
+  if (!media.length) return;
+  if (media.length === 1) {
+    const card = allCards()[index];
+    if (!canHavePhoto(card)) { say('На этой карточке фото выключено — включи «Фото на карточке»'); return; }
+    await setPhoto(index, media[0]);
+  } else {
+    const n = await distributePhotos(media, Math.max(1, index));
+    say('Разложено по карточкам: ' + n);
+  }
+}
+
+/* --------------------------------------------- сцена: жесты и перетаскивание */
+
+function wireStage() {
+  const canvas = el.stageCanvas;
+  let pinch = null;
+
+  canvas.addEventListener('pointerdown', e => {
+    if (pinch) return;
+    const index = state.current;
+    const card = allCards()[index];
+    if (!hasPhoto(card)) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* не критично */ }
+    pushUndo();
+    const sx = e.clientX, sy = e.clientY;
+    const ox = card.panX, oy = card.panY;
+    const ratio = FORMATS[state.format][0] / canvas.clientWidth;
+    const move = ev => {
+      if (pinch) return;
+      card.panX = ox - (ev.clientX - sx) * ratio;
+      card.panY = oy - (ev.clientY - sy) * ratio;
+      commitTransform(index);
+      renderStage();
+    };
+    const up = ev => {
+      canvas.removeEventListener('pointermove', move);
+      canvas.removeEventListener('pointerup', up);
+      canvas.removeEventListener('pointercancel', up);
+      try { canvas.releasePointerCapture(ev.pointerId); } catch { /* не критично */ }
+      scheduleRender();
+      syncTransformInputs();
+    };
+    canvas.addEventListener('pointermove', move);
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+  });
+
+  // щипок двумя пальцами — масштаб
+  canvas.addEventListener('touchstart', e => {
+    const card = allCards()[state.current];
+    if (e.touches.length !== 2 || !hasPhoto(card)) return;
+    const [a, b] = e.touches;
+    pushUndo();
+    pinch = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: card.zoom };
+  }, { passive: true });
+  canvas.addEventListener('touchmove', e => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    const card = allCards()[state.current];
+    const [a, b] = e.touches;
+    const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    card.zoom = clamp(pinch.zoom * (dist / pinch.dist), ZOOM_MIN, ZOOM_MAX);
+    commitTransform(state.current);
+    renderStage();
+  }, { passive: false });
+  canvas.addEventListener('touchend', e => {
+    if (pinch && e.touches.length < 2) { pinch = null; scheduleRender(); syncTransformInputs(); }
+  }, { passive: true });
+
+  canvas.addEventListener('wheel', e => {
+    const card = allCards()[state.current];
+    if (!hasPhoto(card)) return;
+    e.preventDefault();
+    pushUndo();
+    card.zoom = clamp(card.zoom + (e.deltaY > 0 ? -0.05 : 0.05), ZOOM_MIN, ZOOM_MAX);
+    commitTransform(state.current);
+    renderStage();
+    scheduleRender();
+    syncTransformInputs();
+  }, { passive: false });
+
+  el.stage.addEventListener('dragover', e => {
+    if (![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault();
+    el.stageInner.classList.add('drop');
+  });
+  el.stage.addEventListener('dragleave', () => el.stageInner.classList.remove('drop'));
+  el.stage.addEventListener('drop', async e => {
+    e.preventDefault();
+    el.stageInner.classList.remove('drop');
+    await dropMedia([...(e.dataTransfer.files || [])], state.current);
+  });
+
+  if (typeof ResizeObserver !== 'undefined') {
+    let timer = null;
+    new ResizeObserver(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { renderStage(); renderThumbs(); }, 60);
+    }).observe(el.stage);
+  } else {
+    window.addEventListener('resize', () => renderAll());
+  }
+}
+
+/* ======================================================= форма слайда */
+
+function field(label, control, hint) {
+  return h('div', { class: 'field' },
+    typeof label === 'string' ? h('label', { text: label }) : label,
+    control,
+    hint ? h('p', { class: 'hint', text: hint }) : null);
+}
+
+function section(title, action, ...children) {
+  return h('section', { class: 'sec' }, h('div', { class: 'sec-head' }, h('h3', { text: title }), action || null), ...children);
+}
+
+function rangeRow(label, { min, max, value, unit = '', onInput, key }) {
+  const output = h('output', { text: value + unit });
+  const input = h('input', { type: 'range', min: String(min), max: String(max), value: String(value), 'aria-label': label });
+  if (key) input.dataset.tkey = key;
+  input.addEventListener('input', () => {
+    output.textContent = input.value + unit;
+    onInput(Number(input.value));
+  });
+  return h('div', { class: 'range-row' }, h('span', { text: label }), input, output);
+}
+
+function segControl(options, value, onPick, cls = '') {
+  const seg = h('div', { class: 'seg ' + cls });
+  for (const o of options) {
+    const b = h('button', { type: 'button', class: o.value === value ? 'on' : '', title: o.title,
+      'aria-label': o.title || o.label, onclick: () => onPick(o.value) });
+    if (o.icon) b.innerHTML = iconSvg(o.icon);
+    if (o.label) b.append(document.createTextNode(o.label));
+    seg.append(b);
+  }
+  return seg;
+}
+
+function renderSlideForm() {
+  const root = el.tabSlide;
+  root.innerHTML = '';
+  const index = state.current;
+  const card = allCards()[index];
+  if (!card) return;
+  const total = allCards().length;
+  const [W, H] = FORMATS[state.format];
+  root.append(h('div', { class: 'form-head', id: 'slideForm' },
+    h('p', { class: 'eyebrow', text: `Слайд ${index + 1} из ${total} · ${W}×${H}` }),
+    h('h2', { text: cardLabel(index) })));
+
+  if (card.kind === 'cover') buildCoverFields(root);
+  else buildCardFields(root, index, card);
+  if (canHavePhoto(card)) root.append(buildMediaSection(index, card));
+  if (hasPhoto(card)) root.append(buildTransformSection(index, card));
+  root.append(buildTypographySection(index, card));
+  if (index > 0) root.append(buildCardActions(index, total));
+}
+
+function buildCoverFields(root) {
+  const onCoverText = () => { scheduleRender(); saveProject(); syncDocName(); };
+  const title = h('input', { type: 'text', value: state.cover.title, placeholder: 'Заголовок обложки' });
+  title.addEventListener('input', () => { pushUndo(); state.cover.title = title.value; onCoverText(); });
+  const body = h('input', { type: 'text', value: state.cover.body, placeholder: 'Подзаголовок' });
+  body.addEventListener('input', () => { pushUndo(); state.cover.body = body.value; onCoverText(); });
+  root.append(field('Заголовок', title, 'Набирается прописными буквами'), field('Подзаголовок', body));
+}
+
+function buildCardFields(root, index, card) {
+  const cardIndex = index - 1;
+  const toolbar = h('div', { class: 'text-toolbar' },
+    h('button', { type: 'button', class: 'icon-btn sm', 'data-cmd': 'bold', title: 'Жирный (⌘B)', icon: 'text-b' }),
+    h('button', { type: 'button', class: 'icon-btn sm', 'data-cmd': 'italic', title: 'Курсив (⌘I)', icon: 'text-italic' }),
+    h('select', { class: 'size-pick', 'data-cmd': 'size', 'aria-label': 'Кегль выделенного текста' }));
+  const editor = h('div', { id: 'cardEditor', class: 'rich-editor', contenteditable: 'true', spellcheck: 'true',
+    role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Текст карточки',
+    'data-placeholder': 'Текст карточки. Выдели слово и нажми ⌘B — жирный, ⌘I — курсив.' });
+  const body = cardBody(cardIndex);
+  editor.innerHTML = body ? markupToHtml(body) : '';
+  editor.addEventListener('input', () => { const b = cardBinding(); if (b) onEditorInput(b); });
+  ['keyup', 'mouseup', 'focus'].forEach(ev => editor.addEventListener(ev, rememberCaret));
+  wireTextToolbar(toolbar, cardBinding);
+
+  const label = h('label', { text: 'Текст' });
+  root.append(h('div', { class: 'field' }, label, toolbar, editor,
+    h('p', { class: 'hint', text: 'Строка целиком жирная — подзаголовок · пустая строка — отступ' })));
+
+  const toggle = h('input', { type: 'checkbox', checked: card.usePhoto,
+    onchange: e => setCardUsePhoto(cardIndex, e.target.checked) });
+  root.append(field(h('label', { class: 'toggle' }, toggle, 'Фото на карточке'), null,
+    card.usePhoto ? 'С фото — фото полосой сверху, без фото — белая карточка с текстом по центру'
+                  : 'Карточка всегда белая, текст по центру'));
+}
+
+function describeMedia(media) {
+  if (!media) return 'Файл не выбран';
+  if (media instanceof HTMLVideoElement) {
+    const duration = media.durationUnknown ? null : media.duration;
+    const part = (media.trimEnd ?? duration ?? 0) - (media.trimStart || 0);
+    return 'Видео · фрагмент ' + formatSeconds(part) + (duration ? ' из ' + formatSeconds(duration) : '');
+  }
+  return 'Фото ' + (media.naturalWidth || media.width) + '×' + (media.naturalHeight || media.height);
+}
+
+function drawMediaThumb(canvas, media) {
+  const size = 68;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = canvas.height = Math.round(size * dpr);
+  const ctx = canvas.getContext('2d');
+  try {
+    const c = coverCrop(media, canvas.width, canvas.height, 1, 0, 0);
+    ctx.drawImage(media, c.dx, c.dy, c.drawW, c.drawH);
+  } catch { /* кадр видео может быть ещё не готов */ }
+}
+
+function buildMediaSection(index, card) {
+  const media = card.img;
+  const isVideo = media instanceof HTMLVideoElement;
+  const thumb = h('div', { class: 'mthumb' });
+  if (media) {
+    const c = h('canvas');
+    drawMediaThumb(c, media);
+    thumb.append(c);
+    if (isVideo) thumb.append(h('span', { class: 'video-badge', icon: 'film-strip' }));
+  }
+  const actions = h('div', { class: 'mactions' });
+  if (!media) {
+    actions.append(btn('btn btn-primary btn-sm', 'upload-simple', 'Загрузить', () => pickMediaFor(index)));
+  } else {
+    actions.append(btn('btn btn-outline btn-sm', 'upload-simple', 'Заменить', () => pickMediaFor(index)));
+    if (isVideo) actions.append(btn('btn btn-outline btn-sm', 'scissors', 'Обрезать', () => openTrimFor(index)));
+    actions.append(btn('btn btn-danger btn-sm', 'trash', 'Убрать', () => removePhoto(index)));
+  }
+  const box = h('div', { class: 'media-box' }, thumb,
+    h('div', { class: 'mbody' }, h('span', { class: 'mname', text: describeMedia(media) }), actions));
+  box.addEventListener('dragover', e => {
+    if (![...e.dataTransfer.types].includes('Files')) return;
+    e.preventDefault();
+    box.classList.add('drop');
+  });
+  box.addEventListener('dragleave', () => box.classList.remove('drop'));
+  box.addEventListener('drop', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    box.classList.remove('drop');
+    await dropMedia([...(e.dataTransfer.files || [])], index);
+  });
+  return section('Фото или видео', null, box,
+    h('p', { class: 'hint', text: 'Файл можно перетащить прямо на превью или вставить через ⌘V' }));
+}
+
+/* Ползунки кадра: как значение в ползунке ↔ поле слайда. */
+const TRANSFORM_UI = [
+  { key: 'zoom', label: 'Масштаб', min: 0, max: 150, unit: '%',
+    get: c => Math.round(((c.zoom || 1) - 1) * 100), set: (c, v) => { c.zoom = 1 + v / 100; } },
+  { key: 'panX', label: 'Влево-вправо', min: -800, max: 800, unit: '',
+    get: c => Math.round(c.panX || 0), set: (c, v) => { c.panX = v; } },
+  { key: 'panY', label: 'Вверх-вниз', min: -800, max: 800, unit: '',
+    get: c => Math.round(c.panY || 0), set: (c, v) => { c.panY = v; } },
+  { key: 'rotate', label: 'Поворот', min: -180, max: 180, unit: '°',
+    get: c => Math.round(c.rotate || 0), set: (c, v) => { c.rotate = v; } },
+  { key: 'brightness', label: 'Яркость', min: 50, max: 150, unit: '%',
+    get: c => Math.round(c.brightness || 100), set: (c, v) => { c.brightness = v; } },
+  { key: 'contrast', label: 'Контраст', min: 50, max: 150, unit: '%',
+    get: c => Math.round(c.contrast || 100), set: (c, v) => { c.contrast = v; } },
+];
+
+function buildTransformSection(index, card) {
+  const onChange = () => { commitTransform(index); renderStage(); scheduleRender(); };
+  const rows = TRANSFORM_UI.map(t => rangeRow(t.label, {
+    min: t.min, max: t.max, value: t.get(card), unit: t.unit, key: t.key,
+    onInput: v => { pushUndo(); t.set(card, v); onChange(); },
+  }));
+  const gray = h('input', { type: 'checkbox', checked: Boolean(card.grayscale),
+    onchange: e => { pushUndo(); card.grayscale = e.target.checked; onChange(); } });
+  rows.splice(4, 0, h('label', { class: 'toggle' }, gray, 'Чёрно-белое'));
+  return section('Кадр', btn('btn btn-ghost btn-sm', null, 'Сбросить', () => resetTransform(index)),
+    ...rows,
+    h('p', { class: 'hint', text: 'Кадр можно двигать мышью или пальцем прямо на превью, колесо или щипок — масштаб' }));
+}
+
+/* После перетаскивания/колеса на сцене — подтянуть значения ползунков кадра. */
+function syncTransformInputs() {
+  const card = allCards()[state.current];
+  if (!card || state.tab !== 'slide') return;
+  el.tabSlide.querySelectorAll('input[data-tkey]').forEach(input => {
+    const t = TRANSFORM_UI.find(x => x.key === input.dataset.tkey);
+    if (!t) return;
+    input.value = String(t.get(card));
+    const out = input.parentNode.querySelector('output');
+    if (out) out.textContent = input.value + t.unit;
+  });
+}
+
+/* ---------------------------------------------------------- типографика */
+
+function styleTarget(index) {
+  return index === 0 ? { kind: 'cover', field: state.coverTarget } : { kind: 'card', index };
+}
+
+function targetStyle(target) {
+  if (target.kind === 'cover') {
+    const base = defaultTypography(state.cover);
+    base.weight = target.field === 'title' ? LAYOUTS.cover.titleWeight : LAYOUTS.cover.bodyWeight;
+    base.size = target.field === 'title' ? state.coverTitleSize : state.coverBodySize;
+    const own = Object.assign({}, state.coverStyles[target.field]);
+    delete own.size;
+    return Object.assign(base, own);
+  }
+  const card = state.cards[target.index - 1];
+  return Object.assign(defaultTypography(card), card.style || {});
+}
+
+function afterStyleChange(rebuildForm) {
+  syncCards();
+  if (rebuildForm && state.tab === 'slide') renderSlideForm();
+  scheduleRender();
+  saveProject();
+}
+
+/* Записывает изменённую настройку типографики в обложку или карточку. */
+function applyStylePatch(target, patch, rebuildForm = false) {
+  pushUndo();
+  if (target.kind === 'cover') {
+    const f = target.field;
+    const next = Object.assign({}, state.coverStyles[f], patch);
+    if (patch.size) {
+      // кегль обложки живёт отдельно (coverTitleSize/coverBodySize) — он же уходит в шаблон бренда
+      if (f === 'title') state.coverTitleSize = patch.size; else state.coverBodySize = patch.size;
+      delete next.size;
+    }
+    state.coverStyles[f] = next;
+    syncTemplateDesign();
+  } else {
+    const key = state.cardIds[target.index - 1];
+    if (!key) return;
+    state.cardStylesById[key] = Object.assign({}, state.cardStylesById[key] || {}, patch);
+  }
+  afterStyleChange(rebuildForm);
+}
+
+function resetTypography(target) {
+  pushUndo();
+  if (target.kind === 'cover') {
+    state.coverStyles[target.field] = {};
+    if (target.field === 'title') state.coverTitleSize = LAYOUTS.cover.titleSize;
+    else state.coverBodySize = LAYOUTS.cover.bodySize;
+    syncTemplateDesign();
+  } else {
+    delete state.cardStylesById[state.cardIds[target.index - 1]];
+  }
+  afterStyleChange(true);
+  say('Типографика как в макете');
+}
+
+function buildTypographySection(index) {
+  const target = styleTarget(index);
+  const style = targetStyle(target);
+  const children = [];
+  if (target.kind === 'cover') {
+    children.push(segControl([
+      { value: 'title', label: 'Заголовок' }, { value: 'body', label: 'Подзаголовок' },
+    ], state.coverTarget, v => { state.coverTarget = v; renderSlideForm(); }));
+  }
+  children.push(
+    segControl([{ value: 'Medium', label: 'Обычный' }, { value: 'Bold', label: 'Жирный' }], style.weight,
+      v => applyStylePatch(target, { weight: v }, true)),
+    rangeRow('Кегль', { min: 16, max: 140, value: style.size,
+      onInput: v => applyStylePatch(target, { size: v }) }),
+    rangeRow('Интерлиньяж', { min: 80, max: 250, value: style.lineHeight, unit: '%',
+      onInput: v => applyStylePatch(target, { lineHeight: v }) }),
+    rangeRow('Трекинг', { min: -10, max: 50, value: style.letterSpacing, unit: '%',
+      onInput: v => applyStylePatch(target, { letterSpacing: v }) }),
+    segControl([
+      { value: 'left', icon: 'text-align-left', title: 'По левому краю' },
+      { value: 'center', icon: 'text-align-center', title: 'По центру' },
+      { value: 'justify', icon: 'text-align-justify', title: 'По ширине' },
+      { value: 'right', icon: 'text-align-right', title: 'По правому краю' },
+    ], style.align, v => applyStylePatch(target, { align: v }, true), 'align-seg'));
+  return section('Типографика', btn('btn btn-ghost btn-sm', null, 'Как в макете', () => resetTypography(target)),
+    ...children);
+}
+
+function buildCardActions(index, total) {
+  const cardIndex = index - 1;
+  const up = btn('btn btn-outline btn-sm', 'arrow-up', 'Выше', () => moveCard(cardIndex, cardIndex - 1));
+  const down = btn('btn btn-outline btn-sm', 'arrow-down', 'Ниже', () => moveCard(cardIndex, cardIndex + 1));
+  up.disabled = index <= 1;
+  down.disabled = index >= total - 1;
+  return section('Карточка', null, h('div', { class: 'row-actions' }, up, down,
+    btn('btn btn-outline btn-sm', 'copy', 'Дублировать', () => duplicateCard(cardIndex)),
+    btn('btn btn-danger btn-sm', 'trash', 'Удалить', () => deleteCard(cardIndex))));
+}
+
+/* ====================================================== вкладка «Проект» */
+
+function setFormat(format) {
+  if (!FORMATS[format] || format === state.format) return;
+  state.format = format;
+  saveProject();
+  syncDocHeader();
+  renderSlidesList(true);
+  renderProjectForm();
+  overlaySignature = '';
+  renderAll();
+  say('Формат: ' + (FORMAT_INFO[format] ? FORMAT_INFO[format].name + ' · ' : '') + format);
+}
+
+async function switchTemplate(name) {
+  if (!state.templates[name]) return;
+  state.templateName = name;
+  applyTemplateDesign(name);
+  if (!state.assets[name]) await prepareAssets(name);
+  saveProject();
+  refreshEditor();
+}
+
+async function newTemplate() {
+  const name = (prompt('Название шаблона:') || '').trim();
+  if (!name) return;
+  if (state.templates[name]) { say('Шаблон «' + name + '» уже есть'); return; }
+  // новый шаблон стартует с текущего дизайна обложки
+  state.templates[name] = { logo: null, logoDark: null, gradient: null,
+    coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
+    coverStyles: JSON.parse(JSON.stringify(state.coverStyles)) };
+  saveTemplates();
+  await switchTemplate(name);
+}
+
+function renameTemplate() {
+  const oldName = state.templateName;
+  const name = (prompt('Новое название шаблона:', oldName) || '').trim();
+  if (!name || name === oldName) return;
+  if (state.templates[name]) { say('Шаблон «' + name + '» уже есть'); return; }
+  state.templates[name] = state.templates[oldName];
+  delete state.templates[oldName];
+  if (state.assets[oldName]) { state.assets[name] = state.assets[oldName]; delete state.assets[oldName]; }
+  state.templateName = name;
+  saveTemplates();
+  saveProject();
+  renderProjectForm();
+}
+
+async function deleteTemplate() {
+  const name = state.templateName;
+  if (Object.keys(state.templates).length < 2) return;
+  if (!confirm('Удалить шаблон «' + name + '»? Проекты с ним переключатся на другой шаблон.')) return;
+  delete state.templates[name];
+  delete state.assets[name];
+  saveTemplates();
+  await switchTemplate(Object.keys(state.templates)[0]);
+}
+
+let pendingAssetKind = null;
+function pickAsset(kind) {
+  pendingAssetKind = kind;
+  el.assetPicker.value = '';
+  el.assetPicker.click();
+}
+
+async function resetLogos() {
+  const tpl = state.templates[state.templateName] || {};
+  state.templates[state.templateName] = Object.assign({}, tpl, { logo: null, logoDark: null });
+  saveTemplates();
+  await prepareAssets(state.templateName);
+  renderProjectForm();
+  renderAll();
+  say('Вернул встроенные логотипы');
+}
+
+function renderProjectForm() {
+  const root = el.tabProject;
+  root.innerHTML = '';
+  const tpl = state.templates[state.templateName] || {};
+  const B = (typeof BUNDLED_BRAND !== 'undefined') ? BUNDLED_BRAND : {};
+  const [W, H] = FORMATS[state.format];
+
+  root.append(h('div', { class: 'form-head' },
+    h('p', { class: 'eyebrow', text: 'Для всего проекта' }), h('h2', { text: 'Проект' })));
+
+  root.append(field('Формат',
+    segControl(Object.keys(FORMATS).map(f => ({ value: f, label: FORMAT_INFO[f] ? FORMAT_INFO[f].short : f })),
+      state.format, setFormat),
+    `${W}×${H} px — макет карточек тот же, меняется только высота`));
+
+  const select = h('select', { 'aria-label': 'Шаблон бренда', onchange: e => switchTemplate(e.target.value) },
+    ...Object.keys(state.templates).map(name => h('option', { value: name, text: name })));
+  select.value = state.templateName;
+  const tplActions = h('div', { class: 'row-actions' },
+    btn('btn btn-outline btn-sm', 'plus', 'Новый', newTemplate),
+    btn('btn btn-outline btn-sm', null, 'Переименовать', renameTemplate));
+  if (Object.keys(state.templates).length > 1) {
+    tplActions.append(btn('btn btn-danger btn-sm', 'trash', 'Удалить', deleteTemplate));
+  }
+  root.append(section('Шаблон бренда', null, h('div', { class: 'field' }, select), tplActions,
+    h('p', { class: 'hint', text: 'Логотипы, затемнение и кегль обложки хранятся в шаблоне — они общие для всех проектов с этим шаблоном.' })));
+
+  const logoRow = (kind, name, where, darkBg) => {
+    const src = tpl[kind] || B[kind];
+    const prev = h('div', { class: 'logo-prev' + (darkBg ? ' dark-bg' : '') }, src ? h('img', { src, alt: '' }) : null);
+    return h('div', { class: 'logo-row' }, prev,
+      h('div', { class: 'body' },
+        h('span', { class: 'name', text: name }),
+        h('span', { class: 'hint', text: where + (tpl[kind] ? ' · свой файл' : ' · встроенный') }),
+        h('div', { class: 'actions' }, btn('btn btn-outline btn-sm', 'upload-simple', 'Загрузить…', () => pickAsset(kind)))));
+  };
+  root.append(section('Логотипы', (tpl.logo || tpl.logoDark) ? btn('btn btn-ghost btn-sm', null, 'Вернуть встроенные', resetLogos) : null,
+    logoRow('logo', 'Светлый', 'на обложке и фото', true),
+    logoRow('logoDark', 'Тёмный', 'на белых карточках', false)));
+
+  const g = currentGradient();
+  const gradientRow = (key, label, min) => rangeRow(label, { min, max: 100, value: Math.round(g[key] * 100), unit: '%',
+    onInput: v => {
+      const t = state.templates[state.templateName];
+      t.gradient = Object.assign({}, currentGradient(), { [key]: v / 100 });
+      clearTimeout(gradientSaveTimer);
+      gradientSaveTimer = setTimeout(saveTemplates, 400);
+      scheduleRender();
+    } });
+  root.append(section('Затемнение обложки', btn('btn btn-ghost btn-sm', null, 'Как было', () => {
+    state.templates[state.templateName].gradient = null;
+    saveTemplates();
+    renderProjectForm();
+    renderAll();
+  }),
+    gradientRow('height', 'Высота', 5), gradientRow('opacity', 'Плотность', 0), gradientRow('softness', 'Плавность', 5),
+    h('p', { class: 'hint', text: 'Тёмная полоса под текстом обложки — чтобы белый текст читался на любом фото.' })));
+
+  root.append(section('Файл проекта', null,
+    h('div', { class: 'row-actions' },
+      btn('btn btn-outline btn-sm', 'file-arrow-down', 'Сохранить в файл', exportProjectFile),
+      btn('btn btn-outline btn-sm', 'file-arrow-up', 'Открыть из файла', importProjectFile)),
+    h('p', { class: 'hint', text: 'Текст и настройки, без фото и видео — чтобы перенести проект на другой компьютер.' })));
+
+  root.append(section('Очистка', null,
+    h('div', { class: 'row-actions' }, btn('btn btn-danger btn-sm', 'trash', 'Очистить все слайды', clearAll))));
+}
+let gradientSaveTimer = null;
+
 /* ------------------------------------------------------------ инструкция */
 
 const HELP = [
-  ['Как устроено окно',
-   'Слева — превью всех карточек, посередине — текст, справа — типографика, ' +
-   'трансформация картинки и экспорт. Углы панелей можно тянуть, меняя их размер.'],
-  ['Отмена действий',
-   'Две стрелки в начале нижней панели (или ⌘Z / ⌘⇧Z) — отменить/повторить. ' +
-   'Работает для текста, фото, дублирования и перестановки карточек, ' +
-   'автоматической разбивки, очистки рабочей зоны — для всего, что меняет ' +
-   'содержимое проекта. Быстрые правки подряд схлопываются в один шаг. Поля ' +
-   'заголовка и подзаголовка обложки не затрагивает — там штатный ' +
-   'браузерный undo.'],
-  ['Обложка',
-   'Заголовок и подзаголовок набираются в двух верхних полях. Кегль каждого ' +
-   'меняется кнопками − и + справа от поля. Начертание, трекинг и выключку ' +
-   'заголовка и подзаголовка можно настроить по отдельности: поставь курсор ' +
-   'в нужное поле и меняй настройки справа.'],
-  ['Карточки карусели',
-   'Пишутся одним текстом в нижнем поле. Строка //1 начинает новую карточку: ' +
-   'пока фотографии нет — она белая, добавишь фото — сама станет карточкой ' +
-   'с фотографией сверху. Строка //2- оставит карточку белой навсегда. ' +
-   'Если просто вставить большой кусок текста без меток // (абзацы разделены ' +
-   'пустой строкой), кнопка «Разбить автоматически» над полем сама расставит ' +
-   'метки — ровно один абзац на одну карточку, без склейки нескольких абзацев ' +
-   'в одну и без разрезания абзаца на части. Если строка-заголовок (без точки ' +
-   'на конце) отделена от своего текста пустой строкой — эта пустая строка ' +
-   'не считается границей, заголовок с текстом всё равно попадут на одну ' +
-   'карточку. Заменяет текущую раскладку, поэтому спрашивает подтверждение.'],
-  ['Переполнение текста',
-   'Если текста на карточке больше, чем помещается без наложения на фото ' +
-   'или верхний край, в углу превью появляется жёлтый кружок с «!». ' +
-   'Уменьши кегль или межстрочный интервал, либо вручную перенеси часть ' +
-   'текста на другую карточку — «Разбить автоматически» тут не поможет, ' +
-   'она режет только по абзацам, а не по тому, помещается текст или нет.'],
+  ['Проекты',
+   'На стартовом экране — черновики («Продолжить работу») и новый проект: выбери формат ' +
+   '(пост 4:5, квадрат 1:1 или Stories 9:16) и начни с примера или с пустого проекта. ' +
+   'Черновики сохраняются в этом браузере сами, после каждой правки. Фото и видео в ' +
+   'черновик не сохраняются: пока вкладка открыта, они остаются на месте, после ' +
+   'перезагрузки их нужно добавить заново.'],
+  ['Как устроен редактор',
+   'Слева — все слайды: обложка и карточки. По центру — большое превью выбранного слайда, ' +
+   'справа — его настройки. Под превью — проверка: «Текст не помещается», «Фото мелковато», ' +
+   '«Это фото уже есть на другой карточке». Кнопка «Уместить» сама уменьшает кегль, пока ' +
+   'текст не поместится (не меньше 70% от макета). Точка у миниатюры — на этом слайде ' +
+   'текст не помещается.'],
+  ['Текст: по карточкам или целиком',
+   'Вкладка «Слайд» — поля только выбранного слайда: заголовок и подзаголовок обложки или ' +
+   'текст карточки. Вкладка «Весь текст» — все карточки одним полем, как раньше: карточка ' +
+   'начинается строкой //1, //2… Удобно, чтобы вставить длинный текст из Google Документов ' +
+   'и нажать «Разбить на карточки» — каждый абзац станет карточкой (заголовок без точки ' +
+   'в конце приклеивается к следующему абзацу). Оба способа правят один и тот же текст — ' +
+   'можно переключаться как удобно. Пока пишешь во «Весь текст», превью показывает ту ' +
+   'карточку, где стоит курсор.'],
   ['Форматирование',
-   'Выдели текст и нажми ⌘B или ⌘I — или кнопки B и I внизу. Форматирование ' +
-   'сразу видно в поле. Повторное нажатие снимает его. Строка целиком жирная ' +
-   'становится подзаголовком карточки и набирается крупным кеглем. ' +
-   'Пустая строка — отступ в одну строку.'],
-  ['Вставка из других программ',
-   'Текст из Google Документов, Telegram и Word вставляется вместе с жирным ' +
-   'и курсивом — форматирование не теряется.'],
-  ['Фотографии и видео',
-   'Перетащи файл на нужное превью, либо выдели превью и нажми ⌘V, либо ' +
-   'используй первую кнопку внизу — подойдёт и фото, и видео. Колесо мыши ' +
-   'на превью — масштаб, перетаскивание — сдвиг кадра. Точные значения — ' +
-   'в блоке «Трансформация». Если перетащить или выбрать сразу несколько ' +
-   'файлов, они разложатся по карточкам по порядку, пропуская карточки без ' +
-   'медиа (//N-). Крестик в углу превью (появляется, если на карточке есть ' +
-   'фото или видео) убирает его обратно — текст при этом не трогается. ' +
-   'В блоке «Трансформация» — ещё чёрно-белое, яркость и контраст, тоже ' +
-   'применяются и к фото, и к видео выбранной карточки; кнопка «Сбросить» ' +
-   'рядом с заголовком блока возвращает масштаб, сдвиг и поворот к исходным ' +
-   'значениям (фильтры не трогает). Если одно и то же фото случайно ' +
-   'попало на две карточки, при загрузке второй появится подсказка, ' +
-   'на какой карточке оно уже используется.'],
-  ['Видео на карточке',
-   'Работает как фото: та же вставка, то же масштабирование, сдвиг, поворот, ' +
-   'чёрно-белое, яркость и контраст. Сразу после загрузки открывается окно ' +
-   '«Обрезка видео» — на видео-превью тяни зелёные ползунки или впиши начало ' +
-   'и конец в секундах, кнопка «▶ Просмотр» проигрывает именно выбранный ' +
-   'кусок со звуком. Значок «✂» в углу превью карточки открывает это окно ' +
-   'заново в любой момент. Кнопка «▶» по центру превью проигрывает обрезанный ' +
-   'фрагмент прямо в карточке — тоже со звуком, если он есть в исходном ' +
-   'ролике. Тот же звук попадает и в экспорт, если браузер умеет его ' +
-   'записывать (так почти везде, кроме старых Safari). Обработка полностью ' +
-   'локальная, в браузере, без отправки файлов куда-либо.'],
-  ['Поиск фото в интернете',
-   'Значок с лупой в углу превью открывает окно поиска сразу по четырём ' +
-   'бесплатным источникам — Pixabay, Pexels, Unsplash и Openverse. Строка поиска сама ' +
-   'подставляет текст карточки (для обложки — заголовок), можно поправить ' +
-   'и выбрать ориентацию. В выдаче — только фото не меньше 720 пикселей ' +
-   'по каждой стороне и с разрешённым коммерческим использованием. Клик ' +
-   'по превьюшке сразу вставляет фото в карточку.'],
-  ['Дублирование карточки',
-   'Кнопка со сложенными квадратами внизу копирует выбранную карточку ' +
-   'карусели целиком — текст, фото, ручные настройки — и ставит копию ' +
-   'сразу за оригиналом с новым номером в метке.'],
-  ['Порядок карточек',
-   'Значок «⠿» рядом с названием карточки (кроме обложки) — потяни за него ' +
-   'и перетащи на другую карточку, чтобы поменять их местами. Текст, фото ' +
-   'и настройки переезжают вместе с карточкой.'],
-  ['Множественный выбор',
-   'Кружок в углу превью — чекбокс: отмечает карточку для массового действия. ' +
-   'То же самое — Ctrl/⌘+клик по самой карточке (добавить/убрать) или ' +
-   'Shift+клик (выбрать диапазон). Пока есть отмеченные, кнопка с корзиной ' +
-   'в нижней панели удаляет их все разом — единственный способ убрать ' +
-   'карточку целиком (до этого только руками вырезать её текст). Обычный ' +
-   'клик по карточке без модификаторов снимает выбор, Escape — тоже.'],
+   'Выдели текст и нажми ⌘B или ⌘I — или кнопки над полем. Список «Кегль выделения» ' +
+   'меняет размер только выделенного куска. Строка целиком жирная становится подзаголовком ' +
+   'и набирается крупнее. Пустая строка — отступ. Текст из Google Документов, Telegram ' +
+   'и Word вставляется вместе с жирным и курсивом.'],
+  ['Карточки',
+   '«+ Карточка» под списком слайдов добавляет пустую карточку после выбранной. ' +
+   'На миниатюре — кнопки «выше», «ниже», «дублировать», «удалить», а карточки можно ' +
+   'перетаскивать. Галочка «Фото на карточке» в форме: с фото — фото полосой сверху, ' +
+   'без фото — белая карточка с текстом по центру (в тексте это метка //2-).'],
+  ['Фото и видео',
+   'Перетащи файл на превью или на миниатюру, нажми «Фото или видео» на пустом месте ' +
+   'или «Загрузить» в форме, либо вставь ⌘V. Несколько файлов разом раскладываются по ' +
+   'карточкам по порядку. Кадр двигается мышью или пальцем прямо на превью, колесо или ' +
+   'щипок — масштаб; точные значения, поворот, ч/б, яркость и контраст — в блоке «Кадр». ' +
+   'После загрузки видео открывается окно обрезки; «Смотреть» на превью проигрывает ' +
+   'выбранный фрагмент со звуком.'],
   ['Типографика',
-   'Настройки применяются туда, где стоит курсор: к выбранной карточке или ' +
-   'к полю обложки. Область действия написана зелёным рядом со словом ' +
-   '«Типография». Если выделить текст сразу в нескольких карточках, ' +
-   'настройка применится ко всем.'],
-  ['Висячие предлоги',
-   'Короткие слова — в, на, и, для — не остаются в конце строки: ' +
-   'они автоматически переносятся вместе со следующим словом.'],
+   'Блок «Типографика» в форме меняет начертание, кегль, интерлиньяж, трекинг и выключку ' +
+   'выбранного слайда. У обложки заголовок и подзаголовок настраиваются отдельно. ' +
+   '«Как в макете» возвращает всё по умолчанию. Короткие предлоги — в, на, и, для — ' +
+   'никогда не остаются в конце строки.'],
+  ['Проект',
+   'Вкладка «Проект»: формат, шаблон бренда (логотипы, затемнение и кегль обложки — ' +
+   'общие для всех проектов с этим шаблоном), сохранение проекта в файл и открытие из ' +
+   'файла — чтобы перенести его на другой компьютер.'],
   ['Экспорт',
-   'Кнопка Export справа или иконка со стрелкой внизу сохраняют все карточки. ' +
-   'Формат файла — PNG или JPG, разрешение — 1×/2×/3× от 1080 пикселей; ' +
-   'карточки с видео экспортируются в MP4, если браузер умеет его писать ' +
-   '(например Chrome), иначе — в WEBM; звук из исходного ролика сохраняется ' +
-   'в обоих случаях, если браузер умеет его записывать. Обрезка на экспорт ' +
-   'не спрашивается — берётся то, что уже выбрано в окне «Обрезка видео» ' +
-   '(см. «Видео на карточке»). Если видео-карточек несколько, они пишутся ' +
-   'не по очереди, а по нескольку одновременно (сколько — зависит от ' +
-   'мощности устройства), поэтому экспорт карусели с видео занимает время ' +
-   'примерно как самая долгая карточка в группе, а не сумма всех. Пока идёт ' +
-   'экспорт, под кнопкой Export бежит полоска прогресса. Галочка «Одним ' +
-   'ZIP-архивом» — вместо файла за файлом ' +
-   'скачивается один архив со всеми карточками. Кнопка с самолётиком отдаёт ' +
-   'карточки в системное окно «Поделиться», откуда их можно отправить ' +
-   'в Telegram — для видео при этом отправится один кадр, а не сам ролик. ' +
-   '⌘C копирует выбранную карточку в буфер обмена (тоже кадром для видео).'],
-  ['Шаблоны',
-   'Иконка с сеткой внизу — логотипы проекта и переключение между проектами. ' +
-   'Там же, внизу списка — «Сохранить проект в файл» и «Загрузить проект ' +
-   'из файла»: весь текст и настройки (без фото) можно перенести на другой ' +
-   'компьютер или сохранить как резервную копию. ' +
-   'Иконка с карандашом — размер карточки и настройка затемнения на обложке.'],
-  ['Тёмная тема',
-   'Последняя кнопка в нижней панели переключает оформление интерфейса ' +
-   'между светлым и тёмным — на сами карточки это никак не влияет, ' +
-   'они выглядят одинаково в любой теме. Пока не нажмёшь кнопку, тема ' +
-   'подстраивается под системную настройку устройства и меняется вместе ' +
-   'с ней; после нажатия выбор запоминается и не зависит от системной темы.'],
-  ['Режим фокуса',
-   'Кнопка с уголками рядом с «Инструкцией» прячет панель типографики ' +
-   'и все карточки в превью, кроме выбранной — остаются только текст ' +
-   'и текущая карточка, без лишнего вокруг. Повторное нажатие или Escape ' +
-   'возвращают обычный вид. Фото, видео и настройки при этом никуда ' +
-   'не деваются — режим чисто визуальный.'],
-  ['Установка на телефон',
-   'Приложение можно сохранить как иконку на рабочем столе и открывать ' +
-   'без браузерной строки адреса, как обычное приложение. На Android ' +
-   'сверху появится баннер с кнопкой «Установить»; на iPhone/iPad такой ' +
-   'кнопки не бывает — там баннер просто подсказывает путь: «Поделиться» ' +
-   'внизу экрана → «На экран «Домой»». Уже установленным — работает ' +
-   'и без интернета (кроме поиска фото в интернете, ему всегда нужна сеть).'],
+   'Кнопка «Экспорт» справа сверху: PNG или JPG, размер 1×/2×/3× от 1080 пикселей, все ' +
+   'слайды одним ZIP, по одному или только текущий. Там же — скопировать текущий слайд ' +
+   'в буфер и отправить карточки в Telegram. Слайды с видео выгружаются в MP4 (или WEBM, ' +
+   'если браузер не умеет MP4) со звуком; несколько видео пишутся одновременно.'],
+  ['Горячие клавиши',
+   '⌘Z — отменить, ⌘⇧Z (или ⌘Y) — повторить, ⌘S — экспорт всех слайдов, ⌘C — скопировать ' +
+   'слайд, PageUp/PageDown — соседний слайд, Esc — закрыть окно или вернуть панели. ' +
+   'В полях заголовка и подзаголовка ⌘Z работает как обычно, по буквам.'],
+  ['Тема и установка',
+   'Кнопка с луной — тёмная тема интерфейса (на сами карточки не влияет). На телефоне ' +
+   'приложение можно поставить на экран «Домой» — появится подсказка; после установки ' +
+   'оно работает и без интернета.'],
 ];
 
 function openHelp() {
   const body = document.getElementById('helpBody');
-  body.innerHTML = '<h2>Инструкция</h2>' + HELP.map(([title, text]) =>
-    '<section><h3>' + title + '</h3><p>' + text + '</p></section>').join('');
+  body.innerHTML = '';
+  for (const [title, text] of HELP) body.append(h('h3', { text: title }), h('p', { text }));
   document.getElementById('helpModal').hidden = false;
 }
 
 function closeHelp() {
   document.getElementById('helpModal').hidden = true;
-}
-
-/* ------------------------------------------------------------------ меню */
-
-function closeMenu() { el.menu.classList.remove('open'); }
-
-function openMenu(anchor, items) {
-  el.menu.innerHTML = '';
-  for (const item of items) {
-    if (item.divider) { el.menu.appendChild(document.createElement('hr')); continue; }
-    if (item.groupLabel) {
-      const l = document.createElement('div');
-      l.className = 'group-label';
-      l.textContent = item.groupLabel;
-      el.menu.appendChild(l);
-      continue;
-    }
-    const b = document.createElement('button');
-    b.type = 'button';
-    const tick = document.createElement('span');
-    tick.className = 'tick';
-    tick.textContent = item.checked ? '✓' : '';
-    b.appendChild(tick);
-    b.appendChild(document.createTextNode(item.label));
-    b.addEventListener('click', () => { closeMenu(); item.action(); });
-    el.menu.appendChild(b);
-  }
-  placeMenu(anchor);
-}
-
-function placeMenu(anchor) {
-  const rect = anchor.getBoundingClientRect();
-  el.menu.classList.add('open');
-  const width = el.menu.offsetWidth;
-  const height = el.menu.offsetHeight;
-  let left = rect.left + rect.width / 2 - width / 2;
-  left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
-  let top = rect.top - height - 8;
-  if (top < 12) top = rect.bottom + 8;
-  el.menu.style.left = left + 'px';
-  el.menu.style.top = top + 'px';
-}
-
-function formatMenu(anchor) {
-  const items = Object.keys(FORMATS).map(name => ({
-    label: name, checked: name === state.format,
-    action: () => { state.format = name; scheduleRender(); saveProject(); say('Формат: ' + name); },
-  }));
-  items.push({ divider: true }, { groupLabel: 'Затемнение обложки' });
-  openMenu(anchor, items);
-  appendGradientSliders();
-  placeMenu(anchor);
-}
-
-function appendGradientSliders() {
-  const g = currentGradient();
-  const rows = [
-    { key: 'height', title: 'Высота', min: 5, max: 100 },
-    { key: 'opacity', title: 'Плотность', min: 0, max: 100 },
-    { key: 'softness', title: 'Плавность', min: 5, max: 100 },
-  ];
-  for (const row of rows) {
-    const wrap = document.createElement('div');
-    wrap.className = 'slider';
-    const head = document.createElement('div');
-    head.className = 'slider-head';
-    const name = document.createElement('span');
-    name.textContent = row.title;
-    const value = document.createElement('output');
-    value.textContent = Math.round(g[row.key] * 100) + '%';
-    head.append(name, value);
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = String(row.min); input.max = String(row.max);
-    input.value = String(Math.round(g[row.key] * 100));
-    input.addEventListener('input', () => {
-      const tpl = state.templates[state.templateName];
-      tpl.gradient = Object.assign({}, currentGradient(), { [row.key]: Number(input.value) / 100 });
-      value.textContent = input.value + '%';
-      scheduleRender();
-    });
-    input.addEventListener('change', saveTemplates);
-    wrap.append(head, input);
-    el.menu.appendChild(wrap);
-  }
-}
-
-let pendingAssetKind = null;
-
-function templatesMenu(anchor) {
-  const items = [{ groupLabel: 'Шаблон' }];
-  for (const name of Object.keys(state.templates)) {
-    items.push({
-      label: name, checked: name === state.templateName,
-      action: async () => {
-        state.templateName = name;
-        applyTemplateDesign(name);
-        if (!state.assets[name]) await prepareAssets(name);
-        scheduleRender(); saveProject();
-      },
-    });
-  }
-  items.push({ divider: true }, {
-    label: 'Новый шаблон…',
-    action: async () => {
-      const name = prompt('Название шаблона:');
-      if (!name) return;
-      if (state.templates[name]) {
-        say('Шаблон «' + name + '» уже есть — выбери его в списке или введи другое имя');
-        return;
-      }
-      // новый шаблон стартует с текущего дизайна (кегль/стиль обложки) —
-      // его правят дальше через степперы и панель типографики
-      state.templates[name] = { logo: null, logoDark: null, gradient: null,
-        coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
-        coverStyles: JSON.parse(JSON.stringify(state.coverStyles)) };
-      state.templateName = name;
-      saveTemplates();
-      await prepareAssets(name);
-      scheduleRender();
-    },
-  }, {
-    label: 'Переименовать шаблон…',
-    action: () => {
-      const oldName = state.templateName;
-      const name = prompt('Новое название шаблона:', oldName);
-      if (!name || name === oldName) return;
-      if (state.templates[name]) {
-        say('Шаблон «' + name + '» уже есть — выбери другое имя');
-        return;
-      }
-      state.templates[name] = state.templates[oldName];
-      delete state.templates[oldName];
-      state.templateName = name;
-      if (state.assets[oldName]) { state.assets[name] = state.assets[oldName]; delete state.assets[oldName]; }
-      saveTemplates();
-      say('Шаблон переименован в «' + name + '»');
-    },
-  });
-  items.push({ divider: true }, { groupLabel: 'Файлы шаблона' },
-    { label: 'Логотип светлый…', action: () => pickAsset('logo') },
-    { label: 'Логотип тёмный…', action: () => pickAsset('logoDark') });
-
-  const tpl = state.templates[state.templateName] || {};
-  if (tpl.logo || tpl.logoDark) {
-    items.push({
-      label: 'Вернуть логотипы по умолчанию',
-      action: async () => {
-        state.templates[state.templateName] =
-          Object.assign({}, tpl, { logo: null, logoDark: null });
-        saveTemplates();
-        await prepareAssets(state.templateName);
-        scheduleRender();
-        say('Вернул встроенные логотипы');
-      },
-    });
-  }
-  if (Object.keys(state.templates).length > 1) {
-    items.push({
-      label: 'Удалить этот шаблон',
-      action: async () => {
-        delete state.templates[state.templateName];
-        delete state.assets[state.templateName];
-        state.templateName = Object.keys(state.templates)[0];
-        applyTemplateDesign(state.templateName);
-        saveTemplates();
-        if (!state.assets[state.templateName]) await prepareAssets(state.templateName);
-        scheduleRender();
-      },
-    });
-  }
-  items.push({ divider: true }, { groupLabel: 'Резервная копия' },
-    { label: 'Сохранить проект в файл…', action: exportProjectFile },
-    { label: 'Загрузить проект из файла…', action: importProjectFile });
-  openMenu(anchor, items);
-}
-
-function pickAsset(kind) {
-  pendingAssetKind = kind;
-  el.assetPicker.value = '';
-  el.assetPicker.click();
 }
 
 /* --------------------------------------------------------------- отмена */
@@ -2942,6 +3230,8 @@ function snapshotState() {
     coverImg: state.cover.img,
     coverZoom: state.cover.zoom, coverPanX: state.cover.panX,
     coverPanY: state.cover.panY, coverRotate: state.cover.rotate,
+    coverGrayscale: state.cover.grayscale, coverBrightness: state.cover.brightness,
+    coverContrast: state.cover.contrast,
     coverTitleSize: state.coverTitleSize, coverBodySize: state.coverBodySize,
     cardsText: state.cardsText,
     coverStyles: JSON.parse(JSON.stringify(state.coverStyles)),
@@ -2957,6 +3247,9 @@ function restoreSnapshot(snap) {
   state.cover.img = snap.coverImg;
   state.cover.zoom = snap.coverZoom; state.cover.panX = snap.coverPanX;
   state.cover.panY = snap.coverPanY; state.cover.rotate = snap.coverRotate;
+  state.cover.grayscale = snap.coverGrayscale ?? false;
+  state.cover.brightness = snap.coverBrightness ?? 100;
+  state.cover.contrast = snap.coverContrast ?? 100;
   state.coverTitleSize = snap.coverTitleSize; state.coverBodySize = snap.coverBodySize;
   state.cardsText = snap.cardsText;
   state.coverStyles = snap.coverStyles;
@@ -2964,19 +3257,11 @@ function restoreSnapshot(snap) {
   state.transformsById = snap.transformsById;
   state.photosById = snap.photosById;
 
-  // множественный выбор в снимок не попадает — это состояние интерфейса,
-  // а не содержимое проекта; после отмены/повтора надёжнее снять его,
-  // чем оставлять указывать на карточки, которых, может, уже нет
-  state.selectedKeys.clear();
-  state.selectAnchor = null;
-
-  fillControls();
   syncCards();
-  buildPreviews();
-  syncTypographyControls();
+  state.current = Math.min(snap.current, state.cards.length);
+  syncTemplateDesign();
+  refreshEditor();
   saveProject();
-  syncSelectionUI();
-  selectCard(Math.min(snap.current, state.cards.length), { keepZone: true });
 }
 
 const UNDO_LIMIT = 100;
@@ -3024,393 +3309,177 @@ function syncUndoButtons() {
   if (btnRedo) btnRedo.disabled = !state.redoStack.length;
 }
 
-/* --------------------------------------------------------------- очистка */
-
-function clearAll() {
-  pushUndo();
-  state.cover.title = ''; state.cover.body = '';
-  state.cover.img = null; state.cover.zoom = 1; state.cover.panX = 0; state.cover.panY = 0;
-  state.cardsText = '';
-  state.photosById = {};
-  state.cards = [];
-  state.cardIds = [];
-  state.cardStylesById = {};
-  state.transformsById = {};
-  state.coverStyles = { title: {}, body: {} };
-  state.focusZone = 'editor';
-  state.lastCaret = null;
-  state.current = 0;
-  el.coverTitle.value = '';
-  el.coverBody.value = '';
-  setEditorValue('', false);
-  syncCards(); buildPreviews(); saveProject();
-  say('Рабочая зона очищена');
-}
-
-/*
- * Разбивает вставленный текст на карточки: пустая строка — граница абзаца,
- * каждый абзац становится ровно одной карточкой — один в один, без попыток
- * упаковать несколько абзацев в одну карточку или растащить длинный абзац
- * на несколько.
- *
- * Исключение — заголовок: если накопленная карточка сейчас состоит ровно
- * из одной строки и та не заканчивается точкой, это заголовок («Шоколад» —
- * Джоан Харрис», «Зона мастер-классов»), а не законченный абзац. Пустая
- * строка сразу после такого заголовка — просто отступ перед текстом, а не
- * граница карточки, поэтому она пропускается, и следующий абзац
- * приклеивается к заголовку в одну карточку. Если же заголовок с текстом
- * уже были на соседних строках без пустой строки между ними — они и так
- * в одном абзаце, это исключение просто не срабатывает.
- *
- * Длинный абзац может не поместиться на карточку целиком — тогда сработает
- * индикатор переполнения (см. renderCard), и его можно будет разбить вручную.
- * Существующие метки //N в тексте не сохраняются — функция предполагается
- * для только что вставленного текста, а не для правки готовой раскладки.
- */
-function autoSplitText() {
-  const isHeadingOnly = block => block.length === 1 && !block[0].trim().endsWith('.');
-
-  const paragraphs = [];
-  let current = [];
-  for (const line of state.cardsText.split('\n')) {
-    if (/^\/\/\s*\d*\s*[+-]?\s*$/.test(line.trim())) continue;   // старые метки не переносим
-    if (!line.trim()) {
-      if (current.length && !isHeadingOnly(current)) { paragraphs.push(current); current = []; }
-      continue;
-    }
-    current.push(line);
-  }
-  if (current.length) paragraphs.push(current);
-  if (!paragraphs.length) { say('Сначала добавь текст, который нужно разбить'); return; }
-
-  if (!confirm('Текущая раскладка на карточки будет заменена — метки //N расставятся заново, по одному абзацу на карточку. Продолжить?')) return;
-  pushUndo();
-
-  state.cardsText = paragraphs
-    .map((lines, i) => '//' + (i + 1) + '\n' + lines.join('\n'))
-    .join('\n\n');
-  setEditorValue(state.cardsText, false);
-  syncCards(); buildPreviews(); saveProject();
-  say('Разбито на карточек: ' + paragraphs.length);
-}
-
 /* --------------------------------------------------------------- события */
 
+function isTypingTarget(node) {
+  return Boolean(node && (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' ||
+    node.tagName === 'SELECT' || node.isContentEditable));
+}
+
 function wireEvents() {
-  wirePreviewsBulkDrop();
-
-  el.coverTitle.addEventListener('input', () => {
-    pushUndo();   // снимок хватает СТАРЫЙ title — пишем его до переприсвоения ниже
-    state.cover.title = el.coverTitle.value;
-    scheduleRender(); saveProject();
-  });
-  el.coverBody.addEventListener('input', () => {
-    pushUndo();
-    state.cover.body = el.coverBody.value;
-    scheduleRender(); saveProject();
-  });
-
-  document.querySelectorAll('.stepper').forEach(stepper => {
-    stepper.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const delta = Number(btn.dataset.step);
-        const isTitle = stepper.dataset.for === 'coverTitle';
-        const key = isTitle ? 'coverTitleSize' : 'coverBodySize';
-        state[key] = Math.max(8, Math.min(300, state[key] + delta));
-        (isTitle ? el.coverTitleSize : el.coverBodySize).textContent = String(state[key]);
-        syncTemplateDesign();
-        syncCards(); scheduleRender(); saveProject();
-      });
-    });
-  });
-
-  el.cardsText.addEventListener('input', onEditorInput);
-  ['click', 'keyup', 'focus'].forEach(ev =>
-    el.cardsText.addEventListener(ev, () => {
-      rememberEditorFocus();
-      syncTypographyControls();
-      revealActiveCard();
-    }));
-  document.addEventListener('selectionchange', () => {
-    if (!rememberEditorFocus()) return;
-    syncTypographyControls();
-    revealActiveCard();
-  });
-  el.coverTitle.addEventListener('focus', () => { state.focusZone = 'coverTitle'; syncTypographyControls(); });
-  el.coverBody.addEventListener('focus', () => { state.focusZone = 'coverBody'; syncTypographyControls(); });
-
-  // вставка из Google Docs, Telegram и Word — с сохранением форматирования
-  // межстрочное, трекинг и выключка — свойства карточки целиком
-  const applyStyle = () => {
-    applyStylePatch({
-      lineHeight: Math.max(80, Math.min(250, Number(el.lineHeight.value) || 122)),
-      letterSpacing: Math.max(-10, Math.min(50, Number(el.letterSpacing.value) || 0)),
-    });
-  };
-  [el.lineHeight, el.letterSpacing].forEach(node => node.addEventListener('input', applyStyle));
-
-  // кегль и начертание: если в поле есть выделение — только для него
-  el.fontSize.addEventListener('change', () => {
-    const size = Math.max(8, Math.min(300, Number(el.fontSize.value) || 36));
-    if (state.focusZone === 'editor' && hasEditorSelection()) restyleSelection({ size });
-    else applyStylePatch({ size });
-  });
-
-  el.fontWeight.addEventListener('change', () => {
-    const bold = el.fontWeight.value === 'Bold';
-    if (state.focusZone === 'editor' && hasEditorSelection()) {
-      const range = getCaretOffset(el.cardsText) || state.lastCaret;
-      const chars = markupToChars(state.cardsText);
-      const picked = chars.slice(range.start, range.end).filter(c => c.ch !== '\n');
-      if (picked.length && picked.every(c => c.bold) === bold) return;
-      restyleSelection({ bold: 'toggle' });
-    } else {
-      applyStylePatch({ weight: el.fontWeight.value });
-    }
-  });
-
-  el.alignGroup.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      el.alignGroup.querySelectorAll('button').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      applyStylePatch({ align: btn.dataset.align });
-    });
-  });
-
-  el.exportFormat.addEventListener('change', () => {
-    state.exportFormat = el.exportFormat.value;
-    saveProject();
-  });
-  el.exportScale.addEventListener('change', () => {
-    state.exportScale = Number(el.exportScale.value) || 1;
-    saveProject();
-  });
-  el.exportZip.addEventListener('change', () => {
-    state.exportZip = el.exportZip.checked;
-    saveProject();
-  });
-
-  const applyTransform = () => {
-    const card = allCards()[state.current];
-    if (!card) return;
-    card.zoom = 1 + Number(el.rngScale.value) / 100;
-    card.panX = Number(el.rngOffsetX.value);
-    card.panY = Number(el.rngOffsetY.value);
-    card.rotate = Number(el.rngRotate.value);
-    card.grayscale = el.chkGrayscale.checked;
-    card.brightness = Number(el.rngBrightness.value);
-    card.contrast = Number(el.rngContrast.value);
-    commitTransform(state.current);
-    paintTransformOutputs();
-    scheduleRender();
-  };
-  [el.rngScale, el.rngOffsetX, el.rngOffsetY, el.rngRotate, el.rngBrightness, el.rngContrast]
-    .forEach(node => node.addEventListener('input', applyTransform));
-  el.chkGrayscale.addEventListener('change', applyTransform);
-
-  document.getElementById('btnAutoSplit').addEventListener('click', autoSplitText);
-  document.getElementById('btnBold').addEventListener('click', () => toggleMarkup('**'));
-  document.getElementById('btnItalic').addEventListener('click', () => toggleMarkup('_'));
-
-  document.getElementById('btnUndo').addEventListener('click', undo);
-  document.getElementById('btnRedo').addEventListener('click', redo);
-  document.getElementById('btnExportMain').addEventListener('click', exportAll);
-  document.getElementById('btnExportBar').addEventListener('click', exportAll);
-  document.getElementById('btnCopy').addEventListener('click', copyCurrent);
-  document.getElementById('btnDuplicate').addEventListener('click', () => {
-    if (state.current <= 0) { say('Выбери карточку карусели, чтобы её продублировать'); return; }
-    duplicateCard(state.current - 1);
-  });
-  document.getElementById('btnDeleteSelected').addEventListener('click', deleteSelectedCards);
-  document.getElementById('btnPaste').addEventListener('click', pasteFromClipboard);
-  document.getElementById('btnClear').addEventListener('click', clearAll);
-  document.getElementById('btnTelegram').addEventListener('click', sendToTelegram);
-  document.getElementById('btnResetTransform').addEventListener('click', resetTransform);
-  document.getElementById('btnFocus').addEventListener('click', toggleFocusMode);
+  document.querySelectorAll('.theme-btn').forEach(b => b.addEventListener('click', toggleTheme));
+  document.getElementById('btnHelpHome').addEventListener('click', openHelp);
   document.getElementById('btnHelp').addEventListener('click', openHelp);
-  document.getElementById('btnTheme').addEventListener('click', toggleTheme);
   document.getElementById('helpClose').addEventListener('click', closeHelp);
   document.getElementById('helpModal').addEventListener('click', e => {
     if (e.target.id === 'helpModal') closeHelp();
   });
-  document.getElementById('stockPhotoClose').addEventListener('click', closeStockPhotoModal);
-  document.getElementById('stockPhotoModal').addEventListener('click', e => {
-    if (e.target.id === 'stockPhotoModal') closeStockPhotoModal();
-  });
-  document.getElementById('spSearchBtn').addEventListener('click', () => runStockSearch(true));
-  document.getElementById('spQuery').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); runStockSearch(true); }
-  });
-  document.getElementById('spOrientation').addEventListener('change', () => runStockSearch(true));
-  document.getElementById('spMore').addEventListener('click', () => {
-    stockModalState.page++;
-    runStockSearch(false);
-  });
-  document.getElementById('btnImport').addEventListener('click', () => {
-    el.filePicker.value = '';
-    el.filePicker.click();
-  });
-  document.getElementById('btnFormat').addEventListener('click', e => {
-    const open = el.menu.classList.contains('open');
-    closeMenu();
-    if (!open) formatMenu(e.currentTarget);
-  });
-  document.getElementById('btnTemplates').addEventListener('click', e => {
-    const open = el.menu.classList.contains('open');
-    closeMenu();
-    if (!open) templatesMenu(e.currentTarget);
-  });
+  document.getElementById('btnImportProject').addEventListener('click', importProjectFile);
 
+  // --- верхняя панель редактора
+  document.getElementById('btnHome').addEventListener('click', goHome);
+  el.docName.addEventListener('input', () => { state.draftName = el.docName.value.trim(); saveProject(); });
+  el.docName.addEventListener('keydown', e => { if (e.key === 'Enter') el.docName.blur(); });
+  document.getElementById('btnUndo').addEventListener('click', undo);
+  document.getElementById('btnRedo').addEventListener('click', redo);
+  document.getElementById('btnFocus').addEventListener('click', () => toggleFocusMode());
+
+  document.getElementById('btnExport').addEventListener('click', e => {
+    e.stopPropagation();
+    if (el.exportPop.hidden) openExportPop(); else closeExportPop();
+  });
+  el.exportPop.addEventListener('click', e => e.stopPropagation());
+  document.querySelectorAll('#segExportFormat button').forEach(b => b.addEventListener('click', () => {
+    state.exportFormat = b.dataset.value; saveProject(); syncExportPop();
+  }));
+  document.querySelectorAll('#segExportScale button').forEach(b => b.addEventListener('click', () => {
+    state.exportScale = Number(b.dataset.value) || 1; saveProject(); syncExportPop(); renderWarnings();
+  }));
+  document.getElementById('btnExportZip').addEventListener('click', () => exportSlides('zip'));
+  document.getElementById('btnExportFiles').addEventListener('click', () => exportSlides('files'));
+  document.getElementById('btnExportOne').addEventListener('click', () => exportSlides('files', state.current));
+  document.getElementById('btnCopySlide').addEventListener('click', () => { closeExportPop(); copyCurrent(); });
+  document.getElementById('btnTelegram').addEventListener('click', () => { closeExportPop(); sendToTelegram(); });
+  document.addEventListener('click', () => { if (!el.exportPop.hidden) closeExportPop(); });
+
+  // --- слайды и сцена
+  document.getElementById('btnAddCard').addEventListener('click', () => addCard(state.current));
+  document.getElementById('btnPrev').addEventListener('click', () => selectSlide(state.current - 1));
+  document.getElementById('btnNext').addEventListener('click', () => selectSlide(state.current + 1));
+
+  // --- правая панель
+  document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  el.cardsText.addEventListener('input', () => onEditorInput(wholeBinding()));
+  ['keyup', 'mouseup', 'focus'].forEach(ev => el.cardsText.addEventListener(ev, () => {
+    rememberCaret();
+    followCaretCard();
+  }));
+  wireTextToolbar(document.querySelector('#tabText .text-toolbar'), wholeBinding);
+  document.getElementById('btnAutoSplit').addEventListener('click', autoSplitText);
+  document.addEventListener('selectionchange', rememberCaret);
+
+  // --- файлы
   el.filePicker.addEventListener('change', async () => {
     const files = [...el.filePicker.files];
+    const index = pendingMediaIndex ?? state.current;
+    pendingMediaIndex = null;
     if (!files.length) return;
-    if (files.length === 1) { await setPhoto(state.current, files[0]); return; }
-    const n = await distributePhotos(files, Math.max(1, state.current));
+    if (files.length === 1) { await setPhoto(index, files[0]); return; }
+    const n = await distributePhotos(files, Math.max(1, index));
     say('Разложено по карточкам: ' + n);
   });
 
   el.assetPicker.addEventListener('change', () => {
     const file = el.assetPicker.files[0];
-    if (!file || !pendingAssetKind) return;
+    const kind = pendingAssetKind;
+    pendingAssetKind = null;
+    if (!file || !kind) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      state.templates[state.templateName][pendingAssetKind] = reader.result;
+      state.templates[state.templateName][kind] = reader.result;
       saveTemplates();
       await prepareAssets(state.templateName);
-      scheduleRender();
-      say('Загружено: ' + (pendingAssetKind === 'logo' ? 'светлый логотип' : 'тёмный логотип'));
-      pendingAssetKind = null;
+      renderProjectForm();
+      renderAll();
+      say('Загружено: ' + (kind === 'logo' ? 'светлый логотип' : 'тёмный логотип'));
     };
     reader.readAsDataURL(file);
   });
 
   /*
-   * Вставка обрабатывается в одном месте, иначе текст попадал бы в поле
-   * дважды: сначала от обработчика поля, потом от обработчика окна.
+   * Вставка обрабатывается в одном месте: текст — в то поле с разметкой, где
+   * курсор (с жирным и курсивом из Google Документов/Telegram/Word), фото
+   * или видео из буфера — на выбранный слайд. Обычные поля (заголовок
+   * обложки, имя проекта) вставляют текст сами.
    */
   window.addEventListener('paste', async e => {
+    if (state.screen !== 'editor') return;
     const data = e.clipboardData;
     if (!data) return;
-
-    // фото или видео из буфера — в выбранную карточку
     const file = [...(data.items || [])]
       .filter(it => it.kind === 'file' && isMediaFile(it))
       .map(it => it.getAsFile())[0];
-    if (file) { e.preventDefault(); await setPhoto(state.current, file); return; }
-
-    const target = e.target;
-    // поля обложки вставляют текст сами
-    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-
+    if (file) {
+      e.preventDefault();
+      await dropMedia([file], state.current);
+      return;
+    }
+    const binding = bindingFor(e.target);
+    if (!binding) return;
     const html = data.getData('text/html');
     const plain = data.getData('text/plain');
     if (!html && !plain) return;
     e.preventDefault();
     const markup = html ? clipboardHtmlToMarkup(html) : clipboardPlainToMarkup(plain);
-    insertMarkup(markup);
+    insertMarkup(binding, markup);
     say(html || markup !== plain ? 'Вставлено с форматированием' : 'Текст вставлен');
   });
 
   window.addEventListener('keydown', e => {
-    if (!(e.metaKey || e.ctrlKey)) return;
-    const inField = document.activeElement &&
-      (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA');
-    if (e.key === 's') { e.preventDefault(); exportAll(); }
-    // если что-то выделено текстом на странице (например, в окне «Инструкция») —
-    // ⌘C должен копировать этот текст, а не карточку
+    if (e.key === 'Escape') {
+      closeExportPop();
+      closeHelp();
+      if (el.editor.classList.contains('focus')) toggleFocusMode(false);
+      return;
+    }
+    if (state.screen !== 'editor') return;
+    const target = document.activeElement;
+    const inPlainField = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+
+    if (!(e.metaKey || e.ctrlKey)) {
+      if (!isTypingTarget(target) && (e.key === 'PageDown' || e.key === 'PageUp')) {
+        e.preventDefault();
+        selectSlide(state.current + (e.key === 'PageDown' ? 1 : -1));
+      }
+      return;
+    }
+    const key = e.key.toLowerCase();
+    if (key === 's' || key === 'ы') { e.preventDefault(); exportSlides(state.exportMode); return; }
+    // если что-то выделено текстом (например, в инструкции) — ⌘C копирует текст, а не слайд
     const sel = window.getSelection();
     const hasTextSelection = Boolean(sel && sel.toString().length);
-    if (e.key === 'c' && !inField && !hasTextSelection) { e.preventDefault(); copyCurrent(); }
-    // отмена/повтор и форматирование — не в полях обложки, там свой нативный undo
-    // (текстовые input не трогаем программной перезаписью, поэтому он и так работает)
-    if (inField) return;
-    if (e.key === 'b' || e.key === 'и') { e.preventDefault(); toggleMarkup('**'); }
-    if (e.key === 'i' || e.key === 'ш') { e.preventDefault(); toggleMarkup('_'); }
-    if (e.key === 'z' || e.key === 'я') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
-    if ((e.key === 'y' || e.key === 'н') && !e.shiftKey) { e.preventDefault(); redo(); }
+    if ((key === 'c' || key === 'с') && !isTypingTarget(target) && !hasTextSelection) {
+      e.preventDefault(); copyCurrent(); return;
+    }
+    // в полях заголовка/имени — свой, браузерный undo
+    if (inPlainField) return;
+    if (key === 'b' || key === 'и') { if (bindingFor(target)) { e.preventDefault(); toggleMarkup('**'); } return; }
+    if (key === 'i' || key === 'ш') { if (bindingFor(target)) { e.preventDefault(); toggleMarkup('_'); } return; }
+    if (key === 'z' || key === 'я') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+    if ((key === 'y' || key === 'н') && !e.shiftKey) { e.preventDefault(); redo(); }
   });
 
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => e.preventDefault());
-  document.addEventListener('click', e => {
-    if (!el.menu.contains(e.target) && !e.target.closest('.bar button')) closeMenu();
-  });
-  window.addEventListener('keydown', e => {
-    if (e.key === 'Escape') {
-      closeMenu(); closeHelp(); clearSelection();
-      if (document.body.classList.contains('focus-mode')) toggleFocusMode();
-    }
-  });
-  window.addEventListener('resize', () => closeMenu());
 
   /*
-   * Фото и видео нигде не персистятся (saveProject/localStorage хранит
-   * только текст и настройки — см. CLAUDE.md), поэтому закрытие вкладки
-   * с загруженной медией теряет её безвозвратно. Текст же переживёт
-   * закрытие (он и так уже в localStorage после каждой правки), поэтому
-   * предупреждение показываем только когда есть фото/видео, а не всегда.
+   * Фото и видео нигде не сохраняются (черновик хранит только текст и
+   * настройки), поэтому закрытие вкладки теряет их безвозвратно. Текст
+   * переживёт закрытие — предупреждаем только когда есть медиа.
    */
   window.addEventListener('beforeunload', e => {
-    const hasMedia = Boolean(state.cover.img) || Object.values(state.photosById).some(Boolean);
-    if (!hasMedia) return;
+    if (!hasAnyMedia()) return;
     e.preventDefault();
     e.returnValue = '';
   });
 }
 
-/* ------------------------------------------------------ размеры панелей */
-
-const STORE_PANELS = 'cardmaker.panels.v1';
-
-/* Пользователь тянет угол панели — запоминаем размер до следующего раза. */
-function setupPanelResize() {
-  const panels = [...document.querySelectorAll('.panel')];
-  let saved = {};
-  try { saved = JSON.parse(localStorage.getItem(STORE_PANELS) || '{}'); } catch { saved = {}; }
-
-  panels.forEach((panel, i) => {
-    const size = saved[i];
-    if (size) {
-      if (size.w) panel.style.width = size.w + 'px';
-      if (size.h) panel.style.height = size.h + 'px';
-    }
-  });
-
-  if (typeof ResizeObserver === 'undefined') return;
-  let timer = null;
-  const observer = new ResizeObserver(() => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      const data = {};
-      panels.forEach((panel, i) => {
-        data[i] = { w: Math.round(panel.offsetWidth), h: Math.round(panel.offsetHeight) };
-      });
-      try { localStorage.setItem(STORE_PANELS, JSON.stringify(data)); } catch { /* не критично */ }
-      scheduleRender();
-    }, 300);
-  });
-  panels.forEach(panel => observer.observe(panel));
-}
-
 /* ---------------------------------------------------------------- запуск */
-
-function fillControls() {
-  el.coverTitle.value = state.cover.title;
-  el.coverBody.value = state.cover.body;
-  el.coverTitleSize.textContent = String(state.coverTitleSize);
-  el.coverBodySize.textContent = String(state.coverBodySize);
-  setEditorValue(state.cardsText, false);
-  el.exportFormat.value = state.exportFormat;
-  el.exportScale.value = String(state.exportScale);
-  el.exportZip.checked = state.exportZip;
-  syncTransformControls();
-}
 
 async function start() {
   paintIcons();
   syncThemeButton();
-  // пока пользователь не выбрал тему вручную (нет data-theme), кнопка должна
-  // отражать живое изменение системной темы, не только клик
+  // пока тема не выбрана вручную, значок следует за системной темой вживую
   if (window.matchMedia) {
     const mq = window.matchMedia('(prefers-color-scheme: dark)');
     const onSystemThemeChange = () => { if (!document.documentElement.dataset.theme) syncThemeButton(); };
@@ -3418,19 +3487,18 @@ async function start() {
     else if (mq.addListener) mq.addListener(onSystemThemeChange);   // старый Safari
   }
   loadTemplates();
-  if (!loadProject()) state.cardsText = SAMPLE;
-  await prepareAssets(state.templateName);
-  fillControls();
-  wireEvents();
-  syncCards();
-  buildPreviews();
-  syncTypographyControls();
-  setupPanelResize();
-  syncUndoButtons();
-  syncSelectionUI();
-  wireInstallBanner();
-  wireDock();
+  // новый проект берёт шаблон бренда, с которым работали последним
+  const drafts = readDrafts();
+  if (drafts[0] && state.templates[drafts[0].data.templateName]) state.templateName = drafts[0].data.templateName;
+  applyTemplateDesign(state.templateName);
 
+  wireEvents();
+  wireStage();
+  wireInstallBanner();
+  showHome();
+
+  const names = new Set([state.templateName, ...drafts.map(d => d.data.templateName).filter(n => state.templates[n])]);
+  await Promise.all([...names].map(prepareAssets));
   try {
     await Promise.all([
       document.fonts.load('700 60px CardFont'),
@@ -3440,10 +3508,9 @@ async function start() {
     await document.fonts.ready;
   } catch { /* если шрифт не подхватился, рисуем системным */ }
   state.fontsReady = true;
-  renderAll();
+  if (state.screen === 'home') renderHome(); else renderAll();
 
-  // офлайн-доступ: не критично, если недоступно (file://, старый браузер) —
-  // страница и так работает, просто без кеша на случай отсутствия сети
+  // офлайн-доступ: не критично, если недоступно (file://, старый браузер)
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('service-worker.js').catch(() => { /* не критично */ });
   }

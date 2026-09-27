@@ -2,10 +2,11 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Card Maker</title>
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#0dac67">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="__FAVICON__">
 <link rel="apple-touch-icon" href="__APPLE_TOUCH_ICON__">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -25,272 +26,175 @@ __CSS__
 </head>
 <body>
 
-<div class="workspace">
-
-  <!-- ---------------------------------------------------- превью -->
-  <section class="panel panel-previews" aria-label="Превью карточек">
-    <div class="scroll">
-      <div class="previews" id="previews"></div>
-    </div>
-  </section>
-
-  <!-- --------------------------------------------------- редактор -->
-  <section class="panel panel-editor" aria-label="Текст карточек">
-    <p class="section-label">Обложка</p>
-
-    <div class="field">
-      <input type="text" id="coverTitle" placeholder="Заголовок">
-      <div class="stepper" data-for="coverTitle">
-        <button type="button" data-step="-1" aria-label="Меньше">−</button>
-        <output id="coverTitleSize">60</output>
-        <button type="button" data-step="1" aria-label="Больше">+</button>
-      </div>
-    </div>
-
-    <div class="field">
-      <input type="text" id="coverBody" placeholder="Подзаголовок">
-      <div class="stepper" data-for="coverBody">
-        <button type="button" data-step="-1" aria-label="Меньше">−</button>
-        <output id="coverBodySize">45</output>
-        <button type="button" data-step="1" aria-label="Больше">+</button>
-      </div>
-    </div>
-
-    <p class="section-label spaced">
-      Карточки
-      <button type="button" class="btn-ghost" id="btnAutoSplit"
-        title="Разбить вставленный текст на карточки по объёму — режет по абзацам так, чтобы текст помещался на карточку">Разбить автоматически</button>
-    </p>
-    <div class="editor-area">
-      <div id="cardsText" class="rich-editor" contenteditable="true" spellcheck="true"
-           role="textbox" aria-multiline="true" aria-label="Текст карточек"
-           data-placeholder="//1 — новая карточка. Наберите текст, выделите и нажмите ⌘B или ⌘I"></div>
-    </div>
-    <p class="markup-hint">
-      <code>//1</code> начинает новую карточку · выдели текст и нажми ⌘B или ⌘I ·
-      строка целиком жирная — подзаголовок · пустая строка — отступ
-    </p>
-  </section>
-
-  <!-- ------------------------------------------------ инструменты -->
-  <section class="panel panel-tools" aria-label="Типографика и экспорт">
-    <div class="scroll">
-      <p class="section-label">Типография <span class="scope" id="typoScope"></span></p>
-
-      <div class="control-row">
-        <label class="control wide">
-          <select id="fontFamily" aria-label="Шрифт">
-            <option>Raleway</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-      </div>
-
-      <div class="control-row">
-        <label class="control">
-          <select id="fontWeight" aria-label="Начертание">
-            <option value="Medium">Medium</option>
-            <option value="Bold">Bold</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-        <label class="control">
-          <select id="fontSize" aria-label="Кегль">
-            <option>34</option><option>36</option><option>38</option><option>40</option>
-            <option>42</option><option>44</option><option>48</option><option>52</option>
-            <option>54</option><option>60</option><option>64</option><option>68</option>
-            <option>72</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-      </div>
-
-      <div class="control-row">
-        <label class="control muted" title="Межстрочное расстояние">
-          <span class="icon" data-icon="line-height"></span>
-          <input type="number" id="lineHeight" min="80" max="250" step="1" value="122" aria-label="Межстрочное расстояние, %">
-          <span>%</span>
-        </label>
-        <label class="control muted" title="Межбуквенное расстояние">
-          <span class="icon" data-icon="letter-spacing"></span>
-          <input type="number" id="letterSpacing" min="-10" max="50" step="1" value="0" aria-label="Межбуквенное расстояние, %">
-          <span>%</span>
-        </label>
-      </div>
-
-      <div class="control-row">
-        <div class="align-group" id="alignGroup" role="group" aria-label="Выключка">
-          <button type="button" data-align="left" class="active" aria-label="По левому краю">
-            <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1.5" width="12" height="1.6" rx=".8"/><rect x="1" y="5" width="8" height="1.6" rx=".8"/><rect x="1" y="8.5" width="12" height="1.6" rx=".8"/><rect x="1" y="12" width="8" height="1.6" rx=".8"/></svg>
-          </button>
-          <button type="button" data-align="center" aria-label="По центру">
-            <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1.5" width="12" height="1.6" rx=".8"/><rect x="3" y="5" width="8" height="1.6" rx=".8"/><rect x="1" y="8.5" width="12" height="1.6" rx=".8"/><rect x="3" y="12" width="8" height="1.6" rx=".8"/></svg>
-          </button>
-          <button type="button" data-align="justify" aria-label="По ширине">
-            <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1.5" width="12" height="1.6" rx=".8"/><rect x="1" y="5" width="12" height="1.6" rx=".8"/><rect x="1" y="8.5" width="12" height="1.6" rx=".8"/><rect x="1" y="12" width="12" height="1.6" rx=".8"/></svg>
-          </button>
-          <button type="button" data-align="right" aria-label="По правому краю">
-            <svg viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1.5" width="12" height="1.6" rx=".8"/><rect x="5" y="5" width="8" height="1.6" rx=".8"/><rect x="1" y="8.5" width="12" height="1.6" rx=".8"/><rect x="5" y="12" width="8" height="1.6" rx=".8"/></svg>
-          </button>
-        </div>
-      </div>
-
-      <p class="section-label spaced">
-        Трансформация выбранной картинки
-        <button type="button" class="btn-ghost" id="btnResetTransform"
-          title="Вернуть масштаб, сдвиг и поворот к значениям по умолчанию">Сбросить</button>
-      </p>
-
-      <div class="range-row">
-        <div class="range-head"><span>Масштаб</span><output id="scaleOut">0%</output></div>
-        <input type="range" id="rngScale" min="0" max="150" step="1" value="0" aria-label="Масштаб картинки">
-      </div>
-      <div class="range-row">
-        <div class="range-head"><span>Смещение влево-вправо</span><output id="offsetXOut">0 пикселей</output></div>
-        <input type="range" id="rngOffsetX" min="-800" max="800" step="1" value="0" aria-label="Смещение по горизонтали">
-      </div>
-      <div class="range-row">
-        <div class="range-head"><span>Смещение верх-вниз</span><output id="offsetYOut">0 пикселей</output></div>
-        <input type="range" id="rngOffsetY" min="-800" max="800" step="1" value="0" aria-label="Смещение по вертикали">
-      </div>
-      <div class="range-row">
-        <div class="range-head"><span>Поворот</span><output id="rotateOut">0°</output></div>
-        <input type="range" id="rngRotate" min="-180" max="180" step="1" value="0" aria-label="Поворот картинки">
-      </div>
-      <label class="control-check">
-        <input type="checkbox" id="chkGrayscale">
-        <span>Чёрно-белое</span>
-      </label>
-      <div class="range-row">
-        <div class="range-head"><span>Яркость</span><output id="brightnessOut">100%</output></div>
-        <input type="range" id="rngBrightness" min="50" max="150" step="1" value="100" aria-label="Яркость картинки">
-      </div>
-      <div class="range-row">
-        <div class="range-head"><span>Контраст</span><output id="contrastOut">100%</output></div>
-        <input type="range" id="rngContrast" min="50" max="150" step="1" value="100" aria-label="Контраст картинки">
-      </div>
-
-      <p class="section-label spaced">Экспорт</p>
-      <div class="control-row">
-        <label class="control">
-          <select id="exportFormat" aria-label="Формат файла">
-            <option value="png">PNG</option>
-            <option value="jpeg">JPG</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-        <label class="control" title="Разрешение экспорта — умножает 1080×… на 2 или 3">
-          <select id="exportScale" aria-label="Разрешение экспорта">
-            <option value="1">1×</option>
-            <option value="2">2×</option>
-            <option value="3">3×</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-      </div>
-      <label class="control-check">
-        <input type="checkbox" id="exportZip">
-        <span>Одним ZIP-архивом</span>
-      </label>
-      <div class="control-row">
-        <button class="btn-green" id="btnExportMain" type="button">Export</button>
-      </div>
-
-      <div class="export-progress" id="exportProgress" hidden>
-        <div class="export-progress-bar" id="exportProgressBar"></div>
-      </div>
-      <p class="tools-status" id="status"></p>
-    </div>
-  </section>
-
-</div>
-
-<!-- ------------------------------------------- баннер «на экран Домой» -->
 <div class="install-banner" id="installBanner" hidden>
   <span id="installBannerText"></span>
-  <button type="button" class="btn-green" id="installBannerAction" hidden>Установить</button>
-  <button type="button" class="install-banner-close" id="installBannerClose" aria-label="Скрыть">✕</button>
+  <button type="button" class="btn btn-invert btn-sm" id="installBannerAction" hidden>Установить</button>
+  <button type="button" class="icon-btn" id="installBannerClose" aria-label="Скрыть" data-icon="x"></button>
 </div>
 
-<!-- --------------------------------------------------- нижняя панель -->
-<div class="bar">
-  <button id="btnUndo" type="button" title="Отменить (⌘Z)" data-icon="undo"></button>
-  <button id="btnRedo" type="button" title="Повторить (⌘⇧Z)" data-icon="redo"></button>
-  <span class="sep"></span>
-  <button id="btnImport" type="button" title="Импорт фото или видео" data-icon="import"></button>
-  <button id="btnCopy" type="button" title="Скопировать выделенную карточку" data-icon="copy"></button>
-  <button id="btnDuplicate" type="button" title="Дублировать выбранную карточку" data-icon="duplicate"></button>
-  <button id="btnDeleteSelected" type="button" title="Удалить отмеченные карточки" data-icon="delete-selected" disabled></button>
-  <button id="btnPaste" type="button" title="Вставить фото из буфера обмена" data-icon="paste"></button>
-  <button id="btnBold" type="button" title="Жирный (⌘B)" data-icon="bold"></button>
-  <button id="btnItalic" type="button" title="Курсив (⌘I)" data-icon="italic"></button>
-  <span class="sep"></span>
-  <button id="btnFormat" class="small" type="button" title="Формат карточки" data-icon="format"></button>
-  <button id="btnTemplates" type="button" title="Шаблоны проекта" data-icon="templates"></button>
-  <button id="btnClear" type="button" title="Очистить рабочую зону" data-icon="clear"></button>
-  <span class="sep"></span>
-  <button id="btnExportBar" type="button" title="Экспортировать все карточки" data-icon="export"></button>
-  <button id="btnTelegram" type="button" title="Отправить карточки в Telegram" data-icon="telegram"></button>
-  <span class="sep"></span>
-  <button id="btnFocus" type="button" title="Режим фокуса" data-icon="focus"></button>
-  <button id="btnHelp" type="button" title="Инструкция" data-icon="help"></button>
-  <button id="btnTheme" type="button" title="Тёмная тема" data-icon="theme"></button>
-</div>
+<!-- ================================================== стартовый экран -->
+<main class="screen home" id="home" aria-label="Проекты">
+  <header class="home-head">
+    <div class="brand">
+      <span class="brand-name">Card Maker</span>
+      <span class="brand-sub">карусели для Instagram</span>
+    </div>
+    <div class="head-actions">
+      <button type="button" class="icon-btn" id="btnHelpHome" title="Как пользоваться" data-icon="question"></button>
+      <button type="button" class="icon-btn theme-btn" id="btnThemeHome" title="Тёмная тема" data-icon="moon"></button>
+    </div>
+  </header>
 
-<footer class="page-footer">
-  <a href="https://t.me/hhrrzz1" target="_blank" rel="noopener">Поддержка и помощь t.me/hhrrzz1</a>
-  <span>Made with love for my colleagues hhrrzz1</span>
-</footer>
+  <section class="home-intro">
+    <h1>Что делаем сегодня?</h1>
+    <p>Выбери формат и начни с примера или с чистого листа. Обложка и карточки собираются по фирменному макету — шрифт, отступы и логотип уже на месте.</p>
+  </section>
 
-<div class="modal" id="helpModal" role="dialog" aria-modal="true" aria-label="Инструкция" hidden>
-  <div class="modal-card">
-    <button class="modal-close" id="helpClose" type="button" aria-label="Закрыть">✕</button>
-    <div class="modal-body" id="helpBody"></div>
-  </div>
-</div>
+  <section class="drafts" id="draftsSection" hidden>
+    <div class="section-head">
+      <h2>Продолжить работу</h2>
+      <span class="muted">Черновики хранятся в этом браузере. Фото и видео после перезагрузки нужно добавить заново.</span>
+    </div>
+    <div class="drafts-row" id="draftsRow"></div>
+  </section>
 
-<div class="modal" id="videoTrimModal" role="dialog" aria-modal="true" aria-label="Обрезка видео" hidden>
-  <div class="modal-card">
-    <div class="modal-body">
-      <h2 id="videoTrimTitle">Обрезка видео</h2>
-      <p id="videoTrimHint">Для каждого видео на карточке укажи начало и конец нужного фрагмента, в секундах.</p>
-      <div id="videoTrimBody"></div>
-      <div class="video-trim-actions">
-        <button type="button" class="btn-ghost" id="videoTrimCancel">Отмена</button>
-        <button type="button" class="btn-green" id="videoTrimConfirm">Экспортировать</button>
+  <section class="new-project">
+    <div class="section-head">
+      <h2>Новый проект</h2>
+      <span class="muted">Макет карточек один и тот же — отличается только размер.</span>
+    </div>
+    <div class="format-grid" id="formatGrid"></div>
+  </section>
+
+  <section class="home-extra">
+    <button type="button" class="btn btn-ghost" id="btnImportProject"><span data-icon="file-arrow-up"></span>Открыть проект из файла</button>
+  </section>
+</main>
+
+<!-- ========================================================= редактор -->
+<main class="screen editor" id="editor" hidden aria-label="Редактор">
+  <header class="topbar">
+    <button type="button" class="btn btn-ghost" id="btnHome" title="Все проекты"><span data-icon="arrow-left"></span><span class="hide-sm">Проекты</span></button>
+    <div class="doc-title">
+      <input type="text" id="docName" aria-label="Название проекта" spellcheck="false">
+      <span class="chip" id="docFormat"></span>
+    </div>
+    <div class="top-actions">
+      <button type="button" class="icon-btn" id="btnUndo" title="Отменить (⌘Z)" data-icon="arrow-counter-clockwise"></button>
+      <button type="button" class="icon-btn" id="btnRedo" title="Повторить (⌘⇧Z)" data-icon="arrow-clockwise"></button>
+      <button type="button" class="icon-btn hide-sm" id="btnFocus" title="Только превью (Esc — вернуть панели)" data-icon="corners-out"></button>
+      <button type="button" class="icon-btn hide-sm" id="btnHelp" title="Как пользоваться" data-icon="question"></button>
+      <button type="button" class="icon-btn theme-btn" id="btnTheme" title="Тёмная тема" data-icon="moon"></button>
+      <button type="button" class="btn btn-primary" id="btnExport"><span data-icon="download-simple"></span><span class="hide-sm">Экспорт</span></button>
+    </div>
+
+    <div class="export-pop" id="exportPop" hidden>
+      <p class="label">Формат</p>
+      <div class="seg" id="segExportFormat">
+        <button type="button" data-value="png">PNG</button>
+        <button type="button" data-value="jpeg">JPG</button>
       </div>
+      <p class="label">Размер</p>
+      <div class="seg" id="segExportScale">
+        <button type="button" data-value="1">1×</button>
+        <button type="button" data-value="2">2×</button>
+        <button type="button" data-value="3">3×</button>
+      </div>
+      <p class="muted small" id="exportNote"></p>
+      <button type="button" class="btn btn-primary btn-block" id="btnExportZip">Все слайды · ZIP</button>
+      <button type="button" class="btn btn-outline btn-block" id="btnExportFiles">Все слайды по одному</button>
+      <button type="button" class="btn btn-ghost btn-block" id="btnExportOne">Только текущий слайд</button>
+      <div class="pop-sep"></div>
+      <button type="button" class="btn btn-ghost btn-block" id="btnCopySlide"><span data-icon="copy"></span>Скопировать текущий</button>
+      <button type="button" class="btn btn-ghost btn-block" id="btnTelegram"><span data-icon="telegram-logo"></span>Отправить в Telegram</button>
+      <div class="progress" id="exportProgress" hidden><div id="exportProgressBar"></div></div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="slides-panel" aria-label="Слайды">
+      <div class="slides-list" id="slidesList"></div>
+      <div class="add-slide">
+        <button type="button" class="btn btn-outline btn-block" id="btnAddCard"><span data-icon="plus"></span>Карточка</button>
+      </div>
+    </aside>
+
+    <section class="stage-panel" aria-label="Превью слайда">
+      <div class="stage" id="stage">
+        <div class="stage-inner" id="stageInner">
+          <canvas id="stageCanvas"></canvas>
+          <div class="stage-overlay" id="stageOverlay"></div>
+        </div>
+      </div>
+      <div class="stage-bar">
+        <div class="warnings" id="warnings"></div>
+        <div class="stage-nav">
+          <button type="button" class="icon-btn" id="btnPrev" title="Предыдущий слайд" data-icon="arrow-up"></button>
+          <span id="slideCounter"></span>
+          <button type="button" class="icon-btn" id="btnNext" title="Следующий слайд" data-icon="arrow-down"></button>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side-panel" aria-label="Настройки">
+      <nav class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="slide" class="on">Слайд</button>
+        <button type="button" role="tab" data-tab="text">Весь текст</button>
+        <button type="button" role="tab" data-tab="project">Проект</button>
+      </nav>
+
+      <div class="tab-body" id="tabSlide" role="tabpanel"></div>
+
+      <div class="tab-body" id="tabText" role="tabpanel" hidden>
+        <div class="form-head">
+          <p class="eyebrow">Все карточки одним текстом</p>
+          <h2>Весь текст</h2>
+        </div>
+        <div class="text-toolbar" data-editor="whole">
+          <button type="button" class="icon-btn sm" data-cmd="bold" title="Жирный (⌘B)" data-icon="text-b"></button>
+          <button type="button" class="icon-btn sm" data-cmd="italic" title="Курсив (⌘I)" data-icon="text-italic"></button>
+          <select class="size-pick" data-cmd="size" title="Кегль выделенного текста" aria-label="Кегль выделенного текста"></select>
+          <span class="grow"></span>
+          <button type="button" class="btn btn-ghost btn-sm" id="btnAutoSplit" title="Каждый абзац — отдельная карточка"><span data-icon="magic-wand"></span>Разбить на карточки</button>
+        </div>
+        <div id="cardsText" class="rich-editor whole" contenteditable="true" spellcheck="true"
+             role="textbox" aria-multiline="true" aria-label="Текст всех карточек"
+             data-placeholder="Вставь текст сюда — каждый абзац станет карточкой после «Разбить на карточки». Или сам начинай карточки строкой //1, //2…"></div>
+        <p class="hint">
+          <code>//1</code> — новая карточка, <code>//2-</code> — карточка без фото ·
+          выдели текст и нажми ⌘B или ⌘I · строка целиком жирная — подзаголовок ·
+          пустая строка — отступ
+        </p>
+      </div>
+
+      <div class="tab-body" id="tabProject" role="tabpanel" hidden></div>
+    </aside>
+  </div>
+</main>
+
+<p class="status" id="status" role="status" aria-live="polite"></p>
+
+<!-- ===================================================== обрезка видео -->
+<div class="modal" id="videoTrimModal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="videoTrimTitle">
+    <h2 id="videoTrimTitle">Обрезка видео</h2>
+    <p class="muted" id="videoTrimHint"></p>
+    <div id="videoTrimBody"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="videoTrimCancel">Отмена</button>
+      <button type="button" class="btn btn-primary" id="videoTrimConfirm">Готово</button>
     </div>
   </div>
 </div>
 
-<div class="modal" id="stockPhotoModal" role="dialog" aria-modal="true" aria-label="Поиск фото" hidden>
-  <div class="modal-card modal-card-wide">
-    <button class="modal-close" id="stockPhotoClose" type="button" aria-label="Закрыть">✕</button>
-    <div class="modal-body">
-      <h2>Поиск фото</h2>
-      <p>Pixabay, Pexels, Unsplash и Openverse — только фото не меньше 720 пикселей по каждой стороне.</p>
-      <div class="sp-controls">
-        <input type="text" id="spQuery" class="sp-query" placeholder="Что ищем?">
-        <label class="control sp-orientation">
-          <select id="spOrientation" aria-label="Ориентация">
-            <option value="">Любая ориентация</option>
-            <option value="horizontal">Горизонтальная</option>
-            <option value="vertical">Вертикальная</option>
-          </select>
-          <span class="caret" data-icon="caret"></span>
-        </label>
-        <button type="button" class="btn-green" id="spSearchBtn">Искать</button>
-      </div>
-      <p class="sp-status" id="spStatus"></p>
-      <div class="sp-grid" id="spGrid"></div>
-      <div class="sp-more-row">
-        <button type="button" class="btn-ghost" id="spMore" hidden>Показать ещё</button>
-      </div>
-    </div>
+<!-- ========================================================= справка -->
+<div class="modal" id="helpModal" hidden>
+  <div class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <button type="button" class="icon-btn modal-close" id="helpClose" aria-label="Закрыть" data-icon="x"></button>
+    <h2 id="helpTitle">Как пользоваться</h2>
+    <div id="helpBody"></div>
   </div>
 </div>
-
-<div class="menu" id="menu" role="menu"></div>
 
 <input type="file" id="filePicker" accept="image/*,video/*" multiple hidden>
 <input type="file" id="assetPicker" accept="image/png,image/webp,image/jpeg,image/svg+xml" hidden>
